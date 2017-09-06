@@ -364,7 +364,7 @@ void display_title(String& title) {
   display->setTextAlignment(TEXT_ALIGN_CENTER);
   display->setFont(ArialMT_Plain_10);
   display->setColor(BLACK);
-  display->fillRect(0, 0, 128, 10);
+  display->fillRect(0, 0, 128, 13); // Underscores use a extra lines, clear also.
   display->setColor(WHITE);
   display->drawString(64, 0, title);
 }
