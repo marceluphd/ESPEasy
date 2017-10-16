@@ -227,7 +227,7 @@ int getParamStartPos(String& string, byte indexFind)
   String tmpString = string;
   byte count = 0;
   tmpString.replace(" ", ",");
-  for (int x = 0; x < tmpString.length(); x++)
+  for (unsigned int x = 0; x < tmpString.length(); x++)
   {
     if (tmpString.charAt(x) == ',')
     {
@@ -243,7 +243,7 @@ int getParamStartPos(String& string, byte indexFind)
 /*********************************************************************************************\
    set pin mode & state (info table)
   \*********************************************************************************************/
-boolean setPinState(byte plugin, byte index, byte mode, uint16_t value)
+void setPinState(byte plugin, byte index, byte mode, uint16_t value)
 {
   // plugin number and index form a unique key
   // first check if this pin is already known
@@ -372,7 +372,8 @@ boolean timeOut(unsigned long timer)
   // It limits the maximum delay to 24.9 days.
 
   unsigned long now = millis();
-  if (((now >= timer) && ((now - timer) < 1 << 31))  || ((timer >= now) && (timer - now > 1 << 31)))
+  //XXX: fix me, something fishy going on here, this << operator is in the wrong place or parenthesis are wrong
+  if (((now >= timer) && ((now - timer) < 1u << 31))  || ((timer >= now) && (timer - now > 1u << 31)))
     return true;
 
   return false;
@@ -563,7 +564,7 @@ String BuildFixes()
     }
   }
   Settings.Build = BUILD;
-  SaveSettings();
+  return(SaveSettings());
 }
 
 
@@ -627,23 +628,24 @@ byte getProtocolIndex(byte Number)
 }
 
 /********************************************************************************************\
-  Find notification index corresponding to protocol setting
+  Get notificatoin protocol index (plugin index), by NPlugin_id
   \*********************************************************************************************/
-byte getNotificationIndex(byte Number)
+byte getNotificationProtocolIndex(byte Number)
 {
-  byte NotificationIndex = 0;
+
   for (byte x = 0; x <= notificationCount ; x++)
     if (Notification[x].Number == Number)
-      NotificationIndex = x;
-  return NotificationIndex;
+      return(x);
+
+  return(NPLUGIN_NOT_FOUND);
 }
 
 /********************************************************************************************\
   Find positional parameter in a char string
   \*********************************************************************************************/
-boolean GetArgv(const char *string, char *argv, int argc)
+boolean GetArgv(const char *string, char *argv, unsigned int argc)
 {
-  int string_pos = 0, argv_pos = 0, argc_pos = 0;
+  unsigned int string_pos = 0, argv_pos = 0, argc_pos = 0;
   char c, d;
   boolean parenthesis = false;
 
@@ -707,7 +709,7 @@ boolean str2ip(char *string, byte* IP)
   byte part = 0;
   int value = 0;
 
-  for (int x = 0; x <= strlen(string); x++)
+  for (unsigned int x = 0; x <= strlen(string); x++)
   {
     c = string[x];
     if (isdigit(c))
@@ -1342,7 +1344,7 @@ unsigned long string2TimeLong(String &str)
     for (x = strlen(TmpStr1) - 1; x >= 0; x--)
     {
       w = TmpStr1[x];
-      if (w >= '0' && w <= '9' || w == '*')
+      if ( (w >= '0' && w <= '9') || w == '*')
       {
         a = 0xffffffff  ^ (0xfUL << y); // create mask to clean nibble position y
         lngTime &= a; // maak nibble leeg
@@ -1352,7 +1354,8 @@ unsigned long string2TimeLong(String &str)
           lngTime |= (w - '0') << y; // fill nibble with token
         y += 4;
       }
-      else if (w == ':');
+      else
+        if (w == ':');
       else
       {
         break;
@@ -1433,6 +1436,34 @@ String getDateString(char delimiter)
   return reply;
 }
 
+String getDayString()
+{
+  String reply;
+  if (day() < 10)
+    reply += F("0");
+  reply += day();
+  return reply;
+}
+String getMonthString()
+{
+  String reply;
+  if (month() < 10)
+    reply += F("0");
+  reply += month();
+  return reply;
+}
+String getYearString()
+{
+  String reply = String(year());
+  return reply;
+}
+String getYearStringShort()
+{
+  String dummy = String(year());
+  String reply = dummy.substring(2);
+  return reply;
+}
+
 // returns the current Date without delimiter
 // date format example: 20161231 (YYYYMMDD)
 String getDateString()
@@ -1457,6 +1488,31 @@ String getTimeString(char delimiter)
   	reply += delimiter;
   if (second() < 10)
   	reply += F("0");
+  reply += second();
+  return reply;
+}
+
+String getHourString()
+{
+  String reply;
+  if (hour() < 10)
+    reply += F("0");
+  reply += String(hour());
+  return reply;
+}
+String getMinuteString()
+{
+  String reply;
+  if (minute() < 10)
+    reply += F("0");
+  reply += minute();
+  return reply;
+}
+String getSecondString()
+{
+  String reply;
+  if (second() < 10)
+    reply += F("0");
   reply += second();
   return reply;
 }
@@ -1608,6 +1664,14 @@ String parseTemplate(String &tmpString, byte lineSize)
 
   newString.replace(F("%systime%"), getTimeString(':'));
 
+  newString.replace(F("%syshour%"), getHourString());
+  newString.replace(F("%sysmin%"), getMinuteString());
+  newString.replace(F("%syssec%"), getSecondString());
+  newString.replace(F("%sysday%"), getDayString());
+  newString.replace(F("%sysmonth%"), getMonthString());
+  newString.replace(F("%sysyear%"), getYearString());
+  newString.replace(F("%sysyears%"), getYearStringShort());
+
   newString.replace(F("%uptime%"), String(wdcounter / 2));
 
 #if FEATURE_ADC_VCC
@@ -1661,6 +1725,8 @@ float pop()
 {
   if (sp != (globalstack - 1)) // empty
     return *(sp--);
+  else
+    return 0.0;
 }
 
 float apply_operator(char op, float first, float second)
@@ -1694,7 +1760,7 @@ int RPNCalculate(char* token)
   if (token[0] == 0)
     return 0; // geen moeite doen voor een lege string
 
-  if (is_operator(token[0]))
+  if (is_operator(token[0]) && token[1] == 0)
   {
     float second = pop();
     float first = pop();
@@ -1765,7 +1831,7 @@ int Calculate(const char *input, float* result)
 {
   const char *strpos = input, *strend = input + strlen(input);
   char token[25];
-  char c, *TokenPos = token;
+  char c, oc, *TokenPos = token;
   char stack[32];       // operator stack
   unsigned int sl = 0;  // stack length
   char     sc;          // used for record stack element
@@ -1773,15 +1839,16 @@ int Calculate(const char *input, float* result)
 
   //*sp=0; // bug, it stops calculating after 50 times
   sp = globalstack - 1;
-
+  oc=c=0;
   while (strpos < strend)
   {
     // read one token from the input stream
+    oc = c;
     c = *strpos;
     if (c != ' ')
     {
       // If the token is a number (identifier), then add it to the token queue.
-      if ((c >= '0' && c <= '9') || c == '.')
+      if ((c >= '0' && c <= '9') || c == '.' || (c == '-' && is_operator(oc)))
       {
         *TokenPos = c;
         ++TokenPos;
@@ -2189,7 +2256,7 @@ String rulesProcessingFile(String fileName, String& event)
   }
 
 
-  int pos = 0;
+  // int pos = 0;
   String line = "";
   boolean match = false;
   boolean codeBlock = false;
@@ -2871,8 +2938,6 @@ void htmlEscape(String & html)
   html.replace("<",  "&lt;");
   html.replace(">",  "&gt;");
 }
-
-
 
 
 // Compute the dew point temperature, given temperature and humidity (temp in Celcius)

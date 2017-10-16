@@ -112,8 +112,8 @@ class OLEDDisplay : public Print {
   public:
 
     virtual ~OLEDDisplay() {}
-    
-    // Initialize the display
+
+  // Initialize the display
     bool init();
 
     // Free the memory used by the display
@@ -253,7 +253,7 @@ class OLEDDisplay : public Print {
     virtual void sendCommand(uint8_t com) {};
 
     // Connect to the display
-    virtual bool connect() {};
+    virtual bool connect() { return false; };
 
     // Send all the init commands
     void sendInitCommands();
