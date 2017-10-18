@@ -87,25 +87,17 @@ boolean Plugin_036(byte function, struct EventStruct *event, String& string)
         options0[0] = F("3C");
         options0[1] = F("3D");
         */
-        int optionValues0[2];
-        optionValues0[0] = 0x3C;
-        optionValues0[1] = 0x3D;
+        const int optionValues0[] = {0x3C, 0x3D};
         addFormSelectorI2C(string, F("plugin_036_adr"), 2, optionValues0, choice0);
 
         byte choice1 = Settings.TaskDevicePluginConfig[event->TaskIndex][1];
-        String options1[2];
-        options1[0] = F("Normal");
-        options1[1] = F("Rotated");
-        int optionValues1[2] = { 1, 2 };
+        const String options1[] = {"Normal", "Rotated"};
+        const int optionValues1[] = { 1, 2 };
         addFormSelector(string, F("Rotation"), F("plugin_036_rotate"), 2, options1, optionValues1, choice1);
 
         byte choice2 = Settings.TaskDevicePluginConfig[event->TaskIndex][2];
-        String options2[4];
-        options2[0] = F("1");
-        options2[1] = F("2");
-        options2[2] = F("3");
-        options2[3] = F("4");
-        int optionValues2[4] = { 1, 2, 3, 4 };
+        const String options2[] = {F("1"), F("2"), F("3"), F("4")};
+        const int optionValues2[] = { 1, 2, 3, 4 };
         addFormSelector(string, F("Lines per Frame"), F("plugin_036_nlines"), 4, options2, optionValues2, choice2);
 
         byte choice3 = Settings.TaskDevicePluginConfig[event->TaskIndex][3];
@@ -210,7 +202,7 @@ boolean Plugin_036(byte function, struct EventStruct *event, String& string)
         UserVar[event->BaseVarIndex] = 1;
 
         //      flip screen if required
-        if (Settings.TaskDevicePluginConfig[event->TaskIndex][1] == 2)display->flipScreenVertically();
+        if (Settings.TaskDevicePluginConfig[event->TaskIndex][1] == 2) display->flipScreenVertically();
 
         //      Display the device name, logo, time and wifi
         display_header();

@@ -109,6 +109,7 @@ void sendWebPage(const String& tmplName, String& pageContent)
   fs::File f = SPIFFS.open(fileName, "r+");
   if (f)
   {
+    pageTemplate.reserve(f.size());
     while (f.available())
       pageTemplate += (char)f.read();
     f.close();
@@ -402,6 +403,83 @@ void writeDefaultCSS(void)
   }
 }
 
+enum FunctionLabel {
+  fnc_handle_root          =  0,
+  fnc_handle_config        =  1,
+  fnc_handle_controllers   =  2,
+  fnc_handle_notifications =  3,
+  fnc_handle_hardware      =  4,
+  fnc_handle_devices       =  5,
+  fnc_handle_log           =  6,
+  fnc_handle_tools         =  7,
+  fnc_handle_pinstates     =  8,
+  fnc_handle_i2cscanner    =  9,
+  fnc_handle_wifiscanner   = 10,
+  fnc_handle_login         = 11,
+  fnc_handle_upload        = 12,
+  fnc_handle_upload_post   = 13,
+  fnc_handle_filelist      = 14,
+  fnc_handle_SDfilelist    = 15,
+  fnc_handle_setup         = 16,
+  fnc_handle_rules         = 17,
+  fnc_handle_sysinfo       = 18,
+  fnc_handle_advanced      = 19,
+
+  fnc_handle_NR_ITEMS  // Keep as last item
+};
+
+struct WebServer_StrSizeHandler {
+  WebServer_StrSizeHandler(FunctionLabel label): _strSize(0), _fnc_label(label) {
+    switch (_fnc_label) {
+      case fnc_handle_root:          _strSize = 473; break;
+      case fnc_handle_config:        _strSize = 1799; break;
+      case fnc_handle_controllers:   _strSize = 603; break;
+      case fnc_handle_notifications: _strSize = 453; break;
+      case fnc_handle_hardware:      _strSize = 5636; break;
+      case fnc_handle_devices:       _strSize = 1262; break;
+      case fnc_handle_log:           _strSize = 750; break;
+      case fnc_handle_tools:         _strSize = 2129; break;
+      case fnc_handle_pinstates:     _strSize = 178; break;
+      case fnc_handle_i2cscanner:    _strSize = 228; break;
+      case fnc_handle_wifiscanner:   _strSize = 274; break;
+      case fnc_handle_login:         _strSize = 2677; break;
+      case fnc_handle_upload:        _strSize = 0; break;
+      case fnc_handle_upload_post:   _strSize = 0; break;
+      case fnc_handle_filelist:      _strSize = 469; break;
+      case fnc_handle_SDfilelist:    _strSize = 119; break;
+      case fnc_handle_setup:         _strSize = 0; break;
+      case fnc_handle_rules:         _strSize = 0; break;
+      case fnc_handle_sysinfo:       _strSize = 863; break;
+      case fnc_handle_advanced:      _strSize = 0; break;
+    }
+  }
+
+  size_t getStrSize() const {
+    return _strSize;
+  }
+
+  void update(const String& str) {
+    const size_t curStrSize = str.length();
+    if (_strSize < curStrSize) {
+//      String log = F("updateStrSize: ");
+//      log += _strSize;
+      _strSize = curStrSize + 16; // Make it a bit larger than the current value
+/*
+      log += F(" => ");
+      log += _strSize;
+      log += F(" [");
+      log += static_cast<int>(_fnc_label);
+      log += F("]");
+      addLog(LOG_LEVEL_INFO, log);
+*/
+    }
+  }
+
+  private:
+
+    size_t _strSize;
+    FunctionLabel _fnc_label;
+};
 
 //********************************************************************************
 // Add top menu
@@ -418,6 +496,10 @@ void addHeader(boolean showMenu, String& str)
 void addFooter(String& str)
 {
   //not longer used - now part of template
+  const size_t strSize = str.length();
+  str += F("<p>Stringsize: ");
+  str += strSize;
+  str += F("</p>");
 }
 
 
@@ -445,6 +527,8 @@ void handle_root() {
 
     String reply = "";
     navMenuIndex = 0;
+    WebServer_StrSizeHandler strSizeHandler(fnc_handle_root);
+    reply.reserve(strSizeHandler.getStrSize());
     addHeader(true, reply);
 
     printToWeb = true;
@@ -567,6 +651,7 @@ void handle_root() {
 
     reply += F("</table></form>");
     addFooter(reply);
+  strSizeHandler.update(reply);
     sendWebPage(F("TmplStd"), reply);
     printWebString = "";
     printToWeb = false;
@@ -626,6 +711,8 @@ void handle_config() {
   //String apkey = WebServer.arg(F("apkey"));
 
   String reply = "";
+  WebServer_StrSizeHandler strSizeHandler(fnc_handle_config);
+  reply.reserve(strSizeHandler.getStrSize());
   addHeader(true, reply);
 
   if (ssid[0] != 0)
@@ -702,6 +789,8 @@ void handle_config() {
   addSubmitButton(reply);
   reply += F("</table></form>");
   addFooter(reply);
+  strSizeHandler.update(reply);
+
   sendWebPage(F("TmplStd"), reply);
 }
 
@@ -729,6 +818,8 @@ void handle_controllers() {
   String controllerenabled = WebServer.arg(F("controllerenabled"));
 
   String reply = "";
+  WebServer_StrSizeHandler strSizeHandler(fnc_handle_controllers);
+  reply.reserve(strSizeHandler.getStrSize());
   addHeader(true, reply);
 
   byte index = controllerindex.toInt();
@@ -912,6 +1003,8 @@ void handle_controllers() {
     reply += F("</table></form>");
   }
   addFooter(reply);
+  strSizeHandler.update(reply);
+
   sendWebPage(F("TmplStd"), reply);
 }
 
@@ -940,6 +1033,8 @@ void handle_notifications() {
   String notificationenabled = WebServer.arg(F("notificationenabled"));
 
   String reply = "";
+  WebServer_StrSizeHandler strSizeHandler(fnc_handle_notifications);
+  reply.reserve(strSizeHandler.getStrSize());
   addHeader(true, reply);
 
   byte index = notificationindex.toInt();
@@ -1108,6 +1203,8 @@ void handle_notifications() {
     reply += F("</table></form>");
   }
   addFooter(reply);
+  strSizeHandler.update(reply);
+
   sendWebPage(F("TmplStd"), reply);
 }
 
@@ -1120,6 +1217,8 @@ void handle_hardware() {
 
   navMenuIndex = 3;
   String reply = "";
+  WebServer_StrSizeHandler strSizeHandler(fnc_handle_hardware);
+  reply.reserve(strSizeHandler.getStrSize());
   addHeader(true, reply);
 
   if (isFormItem(F("psda")))
@@ -1190,6 +1289,8 @@ void handle_hardware() {
 
   reply += F("<TR><TD></table></form>");
   addFooter(reply);
+  strSizeHandler.update(reply);
+
   sendWebPage(F("TmplStd"), reply);
 }
 
@@ -1287,6 +1388,8 @@ void handle_devices() {
 
   String reply = "";
   //reply.reserve(8192);
+  WebServer_StrSizeHandler strSizeHandler(fnc_handle_devices);
+  reply.reserve(strSizeHandler.getStrSize());
   addHeader(true, reply);
 
   byte index = WebServer.arg(F("index")).toInt();
@@ -1716,6 +1819,8 @@ void handle_devices() {
   }
 
   addFooter(reply);
+  strSizeHandler.update(reply);
+
   checkRAM(F("handle_devices"));
   String log = F("DEBUG: String size:");
   log += reply.length();
@@ -2392,6 +2497,8 @@ void handle_log() {
   char *TempString = (char*)malloc(80);
 
   String reply = "";
+  WebServer_StrSizeHandler strSizeHandler(fnc_handle_log);
+  reply.reserve(strSizeHandler.getStrSize());
   addHeader(true, reply);
   reply += F("<script>function RefreshMe(){window.location = window.location}setTimeout('RefreshMe()', 3000);</script>");
   reply += F("<table><TR><TH>Log<TR><TD>");
@@ -2415,6 +2522,8 @@ void handle_log() {
   }
   reply += F("</table>");
   addFooter(reply);
+  strSizeHandler.update(reply);
+
   sendWebPage(F("TmplStd"), reply);
   free(TempString);
 }
@@ -2430,6 +2539,8 @@ void handle_tools() {
   String webrequest = WebServer.arg(F("cmd"));
 
   String reply = "";
+  WebServer_StrSizeHandler strSizeHandler(fnc_handle_tools);
+  reply.reserve(strSizeHandler.getStrSize());
   addHeader(true, reply);
 
 
@@ -2557,6 +2668,8 @@ void handle_tools() {
   }
   reply += F("</table></form>");
   addFooter(reply);
+  strSizeHandler.update(reply);
+
   sendWebPage(F("TmplStd"), reply);
   printWebString = "";
   printToWeb = false;
@@ -2573,6 +2686,8 @@ void handle_pinstates() {
 
 
   String reply = "";
+  WebServer_StrSizeHandler strSizeHandler(fnc_handle_pinstates);
+  reply.reserve(strSizeHandler.getStrSize());
   addHeader(true, reply);
   addFormHeader(reply, F("Pin state table"));
 
@@ -2611,6 +2726,8 @@ void handle_pinstates() {
 
   reply += F("</table>");
   addFooter(reply);
+  strSizeHandler.update(reply);
+
   sendWebPage(F("TmplStd"), reply);
 }
 
@@ -2625,6 +2742,8 @@ void handle_i2cscanner() {
   char *TempString = (char*)malloc(80);
 
   String reply = "";
+  WebServer_StrSizeHandler strSizeHandler(fnc_handle_i2cscanner);
+  reply.reserve(strSizeHandler.getStrSize());
   addHeader(true, reply);
   reply += F("<table border=1px frame='box' rules='all'><TH>I2C Addresses in use<TH>Supported devices");
 
@@ -2750,6 +2869,8 @@ void handle_i2cscanner() {
 
   reply += F("</table>");
   addFooter(reply);
+  strSizeHandler.update(reply);
+
   sendWebPage(F("TmplStd"), reply);
   free(TempString);
 }
@@ -2765,6 +2886,8 @@ void handle_wifiscanner() {
   char *TempString = (char*)malloc(80);
 
   String reply = "";
+  WebServer_StrSizeHandler strSizeHandler(fnc_handle_wifiscanner);
+  reply.reserve(strSizeHandler.getStrSize());
   addHeader(true, reply);
   reply += F("<table><TR><TH>Access Points:<TH>RSSI");
 
@@ -2785,6 +2908,8 @@ void handle_wifiscanner() {
 
   reply += F("</table>");
   addFooter(reply);
+  strSizeHandler.update(reply);
+
   sendWebPage(F("TmplStd"), reply);
   free(TempString);
 }
@@ -2984,6 +3109,8 @@ void handle_advanced() {
   String MQTTRetainFlag = WebServer.arg(F("mqttretainflag"));
 
   String reply = "";
+  WebServer_StrSizeHandler strSizeHandler(fnc_handle_advanced);
+  reply.reserve(strSizeHandler.getStrSize());
   addHeader(true, reply);
 
   if (edit.length() != 0)
@@ -3086,6 +3213,8 @@ void handle_advanced() {
   reply += F("<input type='hidden' name='edit' value='1'>");
   reply += F("</table></form>");
   addFooter(reply);
+  strSizeHandler.update(reply);
+
   sendWebPage(F("TmplStd"), reply);
 }
 
@@ -3149,11 +3278,15 @@ void handle_upload() {
   if (!isLoggedIn()) return;
 
   String reply = "";
+  WebServer_StrSizeHandler strSizeHandler(fnc_handle_upload);
+  reply.reserve(strSizeHandler.getStrSize());
   addHeader(true, reply);
 
   navMenuIndex = 7;
   reply += F("<form enctype=\"multipart/form-data\" method=\"post\"><p>Upload settings file:<br><input type=\"file\" name=\"datafile\" size=\"40\"></p><div><input class='button link' type='submit' value='Upload'></div><input type='hidden' name='edit' value='1'></form>");
   addFooter(reply);
+  strSizeHandler.update(reply);
+
   sendWebPage(F("TmplStd"), reply);
   printWebString = "";
   printToWeb = false;
@@ -3181,9 +3314,13 @@ void handle_upload_post() {
   if (uploadResult == 3)
     reply += F("<font color=\"red\">No filename!</font>");
 
+  WebServer_StrSizeHandler strSizeHandler(fnc_handle_upload_post);
+  reply.reserve(strSizeHandler.getStrSize());
   addHeader(true, reply);
   reply += F("Upload finished");
   addFooter(reply);
+  strSizeHandler.update(reply);
+
   sendWebPage(F("TmplStd"), reply);
   printWebString = "";
   printToWeb = false;
@@ -3418,6 +3555,7 @@ boolean handle_custom(String path) {
   if (dataFile)
   {
     String page = "";
+    page.reserve(dataFile.size());
     while (dataFile.available())
       page += ((char)dataFile.read());
 
@@ -3477,6 +3615,8 @@ void handle_filelist() {
   }
 
   String reply = "";
+  WebServer_StrSizeHandler strSizeHandler(fnc_handle_filelist);
+  reply.reserve(strSizeHandler.getStrSize());
   addHeader(true, reply);
   reply += F("<table border=1px frame='box' rules='all'><TH><TH>Filename:<TH>Size");
 
@@ -3503,6 +3643,8 @@ void handle_filelist() {
   reply += F("</table></form>");
   reply += F("<BR><a class='button link' href=\"/upload\">Upload</a>");
   addFooter(reply);
+  strSizeHandler.update(reply);
+
   sendWebPage(F("TmplStd"), reply);
 }
 
@@ -3571,6 +3713,8 @@ void handle_SDfilelist() {
   }
 
   String reply = "";
+  WebServer_StrSizeHandler strSizeHandler(fnc_handle_SDfilelist);
+  reply.reserve(strSizeHandler.getStrSize());
   addHeader(true, reply);
   String subheader = "SD Card: " + current_dir;
   addFormSubHeader(reply, subheader);
@@ -3643,6 +3787,8 @@ void handle_SDfilelist() {
   reply += F("</table></form>");
   //reply += F("<BR><a class='button link' href=\"/upload\">Upload</a>");
   addFooter(reply);
+  strSizeHandler.update(reply);
+
   sendWebPage(F("TmplStd"), reply);
 }
 
@@ -3681,6 +3827,8 @@ void handleNotFound() {
 void handle_setup() {
 
   String reply = "";
+  WebServer_StrSizeHandler strSizeHandler(fnc_handle_setup);
+  reply.reserve(strSizeHandler.getStrSize());
   addHeader(false, reply);
 
   if (WiFi.status() == WL_CONNECTED)
@@ -3696,6 +3844,8 @@ void handle_setup() {
     reply += host;
     reply += F("/config'>Proceed to main config</a>");
     addFooter(reply);
+    strSizeHandler.update(reply);
+
     sendWebPage(F("TmplAP"), reply);
 
     wifiSetup = false;
@@ -3800,6 +3950,8 @@ void handle_setup() {
 
   reply += F("</form>");
   addFooter(reply);
+  strSizeHandler.update(reply);
+
   sendWebPage(F("TmplAP"), reply);
   delay(10);
 }
@@ -3827,6 +3979,8 @@ void handle_rules() {
   String reply = "";
   checkRAM(F("handle_rules"));
 
+  WebServer_StrSizeHandler strSizeHandler(fnc_handle_rules);
+  reply.reserve(strSizeHandler.getStrSize());
   addHeader(true, reply);
 
   if (WebServer.args() > 0)
@@ -3921,6 +4075,8 @@ void handle_rules() {
   addSubmitButton(reply);
   reply += F("</table></form>");
   addFooter(reply);
+  strSizeHandler.update(reply);
+
   sendWebPage(F("TmplStd"), reply);
 }
 
@@ -3933,6 +4089,8 @@ void handle_sysinfo() {
 
   int freeMem = ESP.getFreeHeap();
   String reply = "";
+  WebServer_StrSizeHandler strSizeHandler(fnc_handle_sysinfo);
+  reply.reserve(strSizeHandler.getStrSize());
   addHeader(true, reply);
 
   IPAddress ip = WiFi.localIP();
@@ -4092,6 +4250,8 @@ void handle_sysinfo() {
 
   reply += F("</table></form>");
   addFooter(reply);
+  strSizeHandler.update(reply);
+
   sendWebPage(F("TmplStd"), reply);
 }
 
