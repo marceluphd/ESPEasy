@@ -22,6 +22,22 @@
 #define PLUGIN_NAME_052       "Gases - CO2 Senseair"
 #define PLUGIN_VALUENAME1_052 ""
 
+#define ANY_ADDRESS 0xFE
+
+#define READ_HOLDING_REGISTERS 0x03
+#define READ_INPUT_REGISTERS   0x04
+#define WRITE_SINGLE_REGISTER  0x06
+
+#define IR_METERSTATUS  0
+#define IR_ALARMSTATUS  1
+#define IR_OUTPUTSTATUS 2
+#define IR_SPACE_CO2    3
+
+#define HR_ACK_REG      0
+#define HR_SPACE_CO2    3
+#define HR_ABC_PERIOD   31
+
+
 boolean Plugin_052_init = false;
 
 #include <SoftwareSerial.h>
@@ -138,6 +154,17 @@ boolean Plugin_052(byte function, struct EventStruct *event, String& string)
               case 1:
               {
                   int co2 = Plugin_052_readCo2();
+/*                  for (int i = 0; i< 32; ++i) {
+                    int value = Plugin_052_readInputRegister(i);
+                    if (value != -1) {
+                      log += F("(");
+                      log += i;
+                      log += F(";");
+                      log += value;
+                      log += F("), ");
+                    }
+                  }
+                  */
                   UserVar[event->BaseVarIndex] = co2;
                   log += F("co2 = ");
                   log += co2;
@@ -187,133 +214,176 @@ boolean Plugin_052(byte function, struct EventStruct *event, String& string)
   return success;
 }
 
-void Plugin_052_buildFrame(byte slaveAddress,
-              byte  functionCode,
+void Plugin_052_buildFrame(
+              byte slaveAddress,
+              byte functionCode,
               short startAddress,
-              short numberOfRegisters,
-              byte frame[8])
+              short parameter,
+              byte* frame)
 {
   frame[0] = slaveAddress;
   frame[1] = functionCode;
   frame[2] = (byte)(startAddress >> 8);
   frame[3] = (byte)(startAddress);
-  frame[4] = (byte)(numberOfRegisters >> 8);
-  frame[5] = (byte)(numberOfRegisters);
+  frame[4] = (byte)(parameter >> 8);
+  frame[5] = (byte)(parameter);
   // CRC-calculation
-  byte checkSum[2] = {0};
-  Plugin_052_ModRTU_CRC(frame, 6, checkSum);
-  frame[6] = checkSum[0];
-  frame[7] = checkSum[1];
+  byte checksumHi = 0;
+  byte checksumLo = 0;
+  unsigned int crc = Plugin_052_ModRTU_CRC(frame, 6, checksumHi, checksumLo);
+  frame[6] = checksumLo;
+  frame[7] = checksumHi;
 }
 
-int Plugin_052_sendCommand(byte command[])
-{
-  byte recv_buf[7] = {0xff};
-  byte data_buf[2] = {0xff};
-  long value       = -1;
+// Check checksum in buffer with buffer length len
+bool Plugin_052_validChecksum(byte buf[], int len) {
+  if (len < 4) {
+    // too short
+    return false;
+  }
+  byte checksumHi = 0;
+  byte checksumLo = 0;
+  Plugin_052_ModRTU_CRC(buf, (len - 2), checksumHi, checksumLo);
+  if (buf[len - 2] == checksumLo && buf[len - 1] == checksumHi) {
+    return true;
+  }
+  String log = F("Senseair Checksum Failure");
+  addLog(LOG_LEVEL_INFO, log);
+  return false;
+}
 
+bool Plugin_052_processException(byte received_functionCode, byte value) {
+  if ((received_functionCode & 0x80) == 0) {
+    return true;
+  }
+  // Exception Response
+  switch (value) {
+    case 1: {
+      addLog(LOG_LEVEL_INFO, F("Illegal Function"));
+      break;
+    }
+    case 2: {
+      addLog(LOG_LEVEL_INFO, F("Illegal Data Address"));
+      break;
+    }
+    case 3: {
+      addLog(LOG_LEVEL_INFO, F("Illegal Data Value"));
+      break;
+    }
+    default:
+      addLog(LOG_LEVEL_INFO, String(F("Unknown Exception. function: "))+ received_functionCode + String(F(" value: ")) + value);
+      break;
+  }
+  return false;
+}
+
+int Plugin_052_processCommand(const byte* command)
+{
   Plugin_052_SoftSerial->write(command, 8); //Send the byte array
   delay(50);
 
   // Read answer from sensor
   int ByteCounter = 0;
-  while(Plugin_052_SoftSerial->available()) {
+  byte recv_buf[32] = {0xff};
+  while(Plugin_052_SoftSerial->available() && ByteCounter < 32) {
     recv_buf[ByteCounter] = Plugin_052_SoftSerial->read();
     ByteCounter++;
   }
+  if (!Plugin_052_validChecksum(recv_buf, ByteCounter)) {
+    return 0;
+  }
 
+  byte data_buf[2] = {0xff};
   data_buf[0] = recv_buf[3];
   data_buf[1] = recv_buf[4];
-  value = (data_buf[0] << 8) | (data_buf[1]);
+  long value = (data_buf[0] << 8) | (data_buf[1]);
+  if(Plugin_052_processException(recv_buf[1], recv_buf[2])) {
+    // Valid response, no exception
+    return value;
+  }
+  return -1;
+}
 
-  return value;
+int Plugin_052_readInputRegister(short address) {
+  // Only read 1 register
+  return Plugin_052_processRegister(0xFE, READ_INPUT_REGISTERS, address, 1);
+}
+
+int Plugin_052_readHoldingRegister(short address) {
+  // Only read 1 register
+  return Plugin_052_processRegister(0xFE, READ_HOLDING_REGISTERS, address, 1);
+}
+
+// Write to holding register.
+int Plugin_052_writeSingleRegister(short address, short value) {
+  return Plugin_052_processRegister(0xFE, WRITE_SINGLE_REGISTER, address, value);
+}
+
+int Plugin_052_processRegister(
+              byte slaveAddress,
+              byte functionCode,
+              short startAddress,
+              short parameter)
+{
+  byte frame[8] = {0};
+  Plugin_052_buildFrame(slaveAddress, functionCode, startAddress, parameter, frame);
+  return Plugin_052_processCommand(frame);
 }
 
 int Plugin_052_readErrorStatus(void)
 {
-  int errorBits = 0;
-  int error_Status = -1;
-  byte frame[8] = {0};
-  Plugin_052_buildFrame(0xFE, 0x04, 0x00, 1, frame);
-  errorBits = Plugin_052_sendCommand(frame);
-  for (size_t i = 0; i < 15; i++) {
-    if (getBitOfInt(errorBits, i) == 1) {
-      error_Status = i;
-    }
-  }
-  return error_Status;
+  return Plugin_052_readInputRegister(0x00);
 }
 
 int Plugin_052_readCo2(void)
 {
-  int co2 = 0;
-  byte frame[8] = {0};
-  Plugin_052_buildFrame(0xFE, 0x04, 0x03, 1, frame);
-  co2 = Plugin_052_sendCommand(frame);
-  return co2;
+  return Plugin_052_readInputRegister(0x03);
 }
 
 float Plugin_052_readTemperature(void)
 {
-  int temperatureX100 = 0;
-  float temperature = 0.0;
-  byte frame[8] = {0};
-  Plugin_052_buildFrame(0xFE, 0x04, 0x04, 1, frame);
-  temperatureX100 = Plugin_052_sendCommand(frame);
-  temperature = (float)temperatureX100/100;
+  int temperatureX100 = Plugin_052_readInputRegister(0x04);
+  float temperature = (float)temperatureX100/100;
   return temperature;
 }
 
 float Plugin_052_readRelativeHumidity(void)
 {
-  int rhX100 = 0;
+  int rhX100 = Plugin_052_readInputRegister(0x05);
   float rh = 0.0;
-  byte frame[8] = {0};
-  Plugin_052_buildFrame(0xFE, 0x04, 0x05, 1, frame);
-  rhX100 = Plugin_052_sendCommand(frame);
   rh = (float)rhX100/100;
   return rh;
 }
 
 int Plugin_052_readRelayStatus(void)
 {
-  int status = 0;
-  bool result;
-  byte frame[8] = {0};
-
-  Plugin_052_buildFrame(0xFE, 0x04, 0x1C, 1, frame);
-  status = Plugin_052_sendCommand(frame);
-  result = status >> 8 & 0x1;
-
+  int status = Plugin_052_readInputRegister(0x1C);
+  bool result = status >> 8 & 0x1;
   return result;
 }
 
 int Plugin_052_readTemperatureAdjustment(void)
 {
-  int value = 0;
-  byte frame[8] = {0};
-
-  Plugin_052_buildFrame(0xFE, 0x04, 0x0A, 1, frame);
-  value = Plugin_052_sendCommand(frame);
-
-  return value;
+  return Plugin_052_readInputRegister(0x0A);
 }
 
 void Plugin_052_setRelayStatus(int status) {
-  // int response;
-  byte frame[8] = {0};
-  if (status == 0) {
-    Plugin_052_buildFrame(0xFE, 0x06, 0x18, 0x0000, frame);
-  } else if (status == 1){
-    Plugin_052_buildFrame(0xFE, 0x06, 0x18, 0x3FFF, frame);
-  } else {
-    Plugin_052_buildFrame(0xFE, 0x06, 0x18, 0x7FFF, frame);
+  short relaystatus = 0; // 0x3FFF represents 100% output.
+  //  Refer to sensor model’s specification for voltage at 100% output.
+  switch (status) {
+    case 0: relaystatus = 0; break;
+    case 1: relaystatus = 0x3FFF; break;
+    default: relaystatus = 0x7FFF; break;
   }
-  Plugin_052_sendCommand(frame);
+  Plugin_052_writeSingleRegister(0x18, relaystatus);
+}
+
+int Plugin_052_readABCperiod(void) {
+  return Plugin_052_readHoldingRegister(0x1F);
 }
 
 // Compute the MODBUS RTU CRC
-unsigned int Plugin_052_ModRTU_CRC(byte buf[], int len, byte checkSum[2])
+unsigned int Plugin_052_ModRTU_CRC(byte* buf, int len, byte& checksumHi, byte& checksumLo)
 {
   unsigned int crc = 0xFFFF;
 
@@ -330,13 +400,12 @@ unsigned int Plugin_052_ModRTU_CRC(byte buf[], int len, byte checkSum[2])
     }
   }
   // Note, this number has low and high bytes swapped, so use it accordingly (or swap bytes)
-  checkSum[1] = (byte)((crc >> 8) & 0xFF);
-  checkSum[0] = (byte)(crc & 0xFF);
+  checksumHi = (byte)((crc >> 8) & 0xFF);
+  checksumLo = (byte)(crc & 0xFF);
   return crc;
 }
 
-int getBitOfInt(int reg, int pos)
-{
+bool getBitOfInt(int reg, int pos) {
   // Create a mask
   int mask = 0x01 << pos;
 
@@ -345,6 +414,5 @@ int getBitOfInt(int reg, int pos)
 
   // Shift the result of masked register back to position 0
   int result = masked_register >> pos;
-
-  return result;
+  return (result == 1);
 }
