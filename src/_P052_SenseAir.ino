@@ -22,8 +22,6 @@
 #define PLUGIN_NAME_052       "Gases - CO2 Senseair"
 #define PLUGIN_VALUENAME1_052 ""
 
-#define ANY_ADDRESS 0xFE
-
 #define READ_HOLDING_REGISTERS 0x03
 #define READ_INPUT_REGISTERS   0x04
 #define WRITE_SINGLE_REGISTER  0x06
@@ -37,7 +35,11 @@
 #define HR_SPACE_CO2    3
 #define HR_ABC_PERIOD   31
 
+#define MODBUS_RECEIVE_BUFFER 256
+#define MODBUS_SLAVE_ADDRESS 0xFE  // Modbus "any address"
 
+byte _plugin_052_sendframe[8] = {0};
+byte _plugin_052_sendframe_length = 0;
 boolean Plugin_052_init = false;
 
 #include <SoftwareSerial.h>
@@ -122,6 +124,7 @@ boolean Plugin_052(byte function, struct EventStruct *event, String& string)
         Plugin_052_SoftSerial = new SoftwareSerial(Settings.TaskDevicePin1[event->TaskIndex],
                                                    Settings.TaskDevicePin2[event->TaskIndex]);
         success = true;
+        Plugin_052_modbus_log_MEI(MODBUS_SLAVE_ADDRESS);
         break;
       }
 
@@ -214,29 +217,81 @@ boolean Plugin_052(byte function, struct EventStruct *event, String& string)
   return success;
 }
 
+void Plugin_052_AddModRTU_CRC() {
+  // CRC-calculation
+  byte checksumHi = 0;
+  byte checksumLo = 0;
+  unsigned int crc = Plugin_052_ModRTU_CRC(_plugin_052_sendframe, _plugin_052_sendframe_length, checksumHi, checksumLo);
+  _plugin_052_sendframe[_plugin_052_sendframe_length] = checksumLo;
+  _plugin_052_sendframe[_plugin_052_sendframe_length + 1] = checksumHi;
+}
+
 void Plugin_052_buildFrame(
               byte slaveAddress,
               byte functionCode,
               short startAddress,
-              short parameter,
-              byte* frame)
+              short parameter)
 {
-  frame[0] = slaveAddress;
-  frame[1] = functionCode;
-  frame[2] = (byte)(startAddress >> 8);
-  frame[3] = (byte)(startAddress);
-  frame[4] = (byte)(parameter >> 8);
-  frame[5] = (byte)(parameter);
-  // CRC-calculation
-  byte checksumHi = 0;
-  byte checksumLo = 0;
-  unsigned int crc = Plugin_052_ModRTU_CRC(frame, 6, checksumHi, checksumLo);
-  frame[6] = checksumLo;
-  frame[7] = checksumHi;
+  _plugin_052_sendframe[0] = slaveAddress;
+  _plugin_052_sendframe[1] = functionCode;
+  _plugin_052_sendframe[2] = (byte)(startAddress >> 8);
+  _plugin_052_sendframe[3] = (byte)(startAddress);
+  _plugin_052_sendframe[4] = (byte)(parameter >> 8);
+  _plugin_052_sendframe[5] = (byte)(parameter);
+  _plugin_052_sendframe_length = 6;
+}
+
+void Plugin_052_build_modbus_MEI_frame(
+              byte slaveAddress,
+              byte device_id,
+              byte object_id)
+{
+  _plugin_052_sendframe[0] = slaveAddress;
+  _plugin_052_sendframe[1] = 0x2B;
+  _plugin_052_sendframe[2] = 0x0E;
+  _plugin_052_sendframe[3] = device_id;
+  _plugin_052_sendframe[4] = object_id;
+  _plugin_052_sendframe_length = 5;
+}
+
+byte Plugin_052_parse_modbus_MEI_response(byte* receive_buf, byte length) {
+  int pos = 3;  // Data skipped: slave_address, FunctionCode, MEI type
+  const byte device_id = receive_buf[pos++];
+  const byte conformity_level = receive_buf[pos++];
+  const bool more_follows = receive_buf[pos++] != 0;
+  const byte next_object_id = receive_buf[pos++];
+  const byte number_objects = receive_buf[pos++];
+  byte object_id = 0;
+  for (int i = 0; i < number_objects; ++i) {
+    object_id = receive_buf[pos++];
+    const byte object_length = receive_buf[pos++];
+    String object_value;
+    object_value.reserve(object_length);
+    for (int c = 0; c < object_length; ++c) {
+      object_value += char(receive_buf[pos++]);
+    }
+    String object_name;
+    switch (object_id) {
+      case 0: object_name = F("VendorName"); break;
+      case 1: object_name = F("ProductCode"); break;
+      case 2: object_name = F("MajorMinorRevision"); break;
+      case 3: object_name = F("VendorUrl"); break;
+      case 4: object_name = F("ProductName"); break;
+      case 5: object_name = F("ModelName"); break;
+      case 6: object_name = F("UserApplicationName"); break;
+      default:
+        object_name = int(object_id);
+        break;
+    }
+    addLog(LOG_LEVEL_INFO, String(F("Modbus MEI ")) + object_name + String(F(": ")) + object_value);
+  }
+  if (more_follows) return next_object_id;
+  if (object_id < 0xFF) return object_id + 1;
+  return 0;
 }
 
 // Check checksum in buffer with buffer length len
-bool Plugin_052_validChecksum(byte buf[], int len) {
+bool Plugin_052_validChecksum(byte* buf, int len) {
   if (len < 4) {
     // too short
     return false;
@@ -247,58 +302,85 @@ bool Plugin_052_validChecksum(byte buf[], int len) {
   if (buf[len - 2] == checksumLo && buf[len - 1] == checksumHi) {
     return true;
   }
-  String log = F("Senseair Checksum Failure");
+  String log = F("Modbus Checksum Failure");
   addLog(LOG_LEVEL_INFO, log);
   return false;
 }
 
-bool Plugin_052_processException(byte received_functionCode, byte value) {
+bool Plugin_052_processModbusException(byte received_functionCode, byte value) {
   if ((received_functionCode & 0x80) == 0) {
     return true;
   }
-  // Exception Response
+  // Exception Response, see: http://digital.ni.com/public.nsf/allkb/E40CA0CFA0029B2286256A9900758E06?OpenDocument
   switch (value) {
     case 1: {
+      // The function code received in the query is not an allowable action for the slave.
+      // If a Poll Program Complete command was issued, this code indicates that no program function preceded it.
       addLog(LOG_LEVEL_INFO, F("Illegal Function"));
       break;
     }
     case 2: {
+      // The data address received in the query is not an allowable address for the slave.
       addLog(LOG_LEVEL_INFO, F("Illegal Data Address"));
       break;
     }
     case 3: {
+      // A value contained in the query data field is not an allowable value for the slave
       addLog(LOG_LEVEL_INFO, F("Illegal Data Value"));
       break;
     }
+    case 4: {
+      // An unrecoverable error occurred while the slave was attempting to perform the requested action
+      addLog(LOG_LEVEL_INFO, F("Slave Device Failure"));
+      break;
+    }
+    case 5: {
+      // The slave has accepted the request and is processing it, but a long duration of time will be
+      // required to do so. This response is returned to prevent a timeout error from occurring in the master.
+      // The master can next issue a Poll Program Complete message to determine if processing is completed.
+      addLog(LOG_LEVEL_INFO, F("Acknowledge"));
+      break;
+    }
+    case 6: {
+      // The slave is engaged in processing a long-duration program command.
+      // The master should retransmit the message later when the slave is free.
+      addLog(LOG_LEVEL_INFO, F("Slave Device Busy"));
+      break;
+    }
     default:
-      addLog(LOG_LEVEL_INFO, String(F("Unknown Exception. function: "))+ received_functionCode + String(F(" value: ")) + value);
+      addLog(LOG_LEVEL_INFO, String(F("Unknown Exception. function: "))+ received_functionCode + String(F(" Exception code: ")) + value);
       break;
   }
   return false;
 }
 
-int Plugin_052_processCommand(const byte* command)
+int Plugin_052_processCommand()
 {
-  Plugin_052_SoftSerial->write(command, 8); //Send the byte array
+  Plugin_052_AddModRTU_CRC();
+  Plugin_052_SoftSerial->write(_plugin_052_sendframe, _plugin_052_sendframe_length + 2); //Send the byte array
   delay(50);
 
   // Read answer from sensor
   int ByteCounter = 0;
-  byte recv_buf[32] = {0xff};
-  while(Plugin_052_SoftSerial->available() && ByteCounter < 32) {
+  byte recv_buf[MODBUS_RECEIVE_BUFFER] = {0xff};
+  while(Plugin_052_SoftSerial->available() && ByteCounter < MODBUS_RECEIVE_BUFFER) {
     recv_buf[ByteCounter] = Plugin_052_SoftSerial->read();
     ByteCounter++;
   }
   if (!Plugin_052_validChecksum(recv_buf, ByteCounter)) {
     return 0;
   }
-
-  byte data_buf[2] = {0xff};
-  data_buf[0] = recv_buf[3];
-  data_buf[1] = recv_buf[4];
-  long value = (data_buf[0] << 8) | (data_buf[1]);
-  if(Plugin_052_processException(recv_buf[1], recv_buf[2])) {
+  if(Plugin_052_processModbusException(recv_buf[1], recv_buf[2])) {
     // Valid response, no exception
+    switch(recv_buf[1]) {
+      case 0x2B: // Read Device Identification
+      {
+        return Plugin_052_parse_modbus_MEI_response(recv_buf, ByteCounter);
+      }
+      default:
+        break;
+    }
+    long value = (recv_buf[3] << 8) | (recv_buf[4]);
     return value;
   }
   return -1;
@@ -306,17 +388,46 @@ int Plugin_052_processCommand(const byte* command)
 
 int Plugin_052_readInputRegister(short address) {
   // Only read 1 register
-  return Plugin_052_processRegister(0xFE, READ_INPUT_REGISTERS, address, 1);
+  return Plugin_052_processRegister(MODBUS_SLAVE_ADDRESS, READ_INPUT_REGISTERS, address, 1);
 }
 
 int Plugin_052_readHoldingRegister(short address) {
   // Only read 1 register
-  return Plugin_052_processRegister(0xFE, READ_HOLDING_REGISTERS, address, 1);
+  return Plugin_052_processRegister(MODBUS_SLAVE_ADDRESS, READ_HOLDING_REGISTERS, address, 1);
 }
 
 // Write to holding register.
 int Plugin_052_writeSingleRegister(short address, short value) {
-  return Plugin_052_processRegister(0xFE, WRITE_SINGLE_REGISTER, address, value);
+  return Plugin_052_processRegister(MODBUS_SLAVE_ADDRESS, WRITE_SINGLE_REGISTER, address, value);
+}
+
+void Plugin_052_modbus_log_MEI(byte slaveAddress) {
+  for (int device_id = 1; device_id <= 4; ++device_id) {
+    // Basic, Regular, Extended
+    byte object_id_lo = 0;
+    byte object_id_hi = 0xff;
+    switch (device_id) {
+      case 1: // basic
+        object_id_lo = 0;
+        object_id_hi = 2;
+        break;
+      case 2: // Regular
+        object_id_lo = 0x03;
+        object_id_hi = 0x06;
+        break;
+      case 3: // Extended
+        object_id_lo = 0x80;
+        object_id_hi = 0x83;
+        break;
+    }
+    bool more_follows = true;
+    byte object_id = object_id_lo;
+    while (more_follows) {
+      Plugin_052_build_modbus_MEI_frame(slaveAddress, device_id, object_id);
+      object_id = Plugin_052_processCommand();
+      more_follows = object_id != 0;// && object_id > object_id_lo && object_id <= object_id_hi;
+    }
+  }
 }
 
 int Plugin_052_processRegister(
@@ -325,9 +436,8 @@ int Plugin_052_processRegister(
               short startAddress,
               short parameter)
 {
-  byte frame[8] = {0};
-  Plugin_052_buildFrame(slaveAddress, functionCode, startAddress, parameter, frame);
-  return Plugin_052_processCommand(frame);
+  Plugin_052_buildFrame(slaveAddress, functionCode, startAddress, parameter);
+  return Plugin_052_processCommand();
 }
 
 int Plugin_052_readErrorStatus(void)
