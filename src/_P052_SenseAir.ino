@@ -22,24 +22,50 @@
 #define PLUGIN_NAME_052       "Gases - CO2 Senseair"
 #define PLUGIN_VALUENAME1_052 ""
 
-#define READ_HOLDING_REGISTERS 0x03
-#define READ_INPUT_REGISTERS   0x04
-#define WRITE_SINGLE_REGISTER  0x06
+#define P052_READ_HOLDING_REGISTERS     0x03
+#define P052_READ_INPUT_REGISTERS       0x04
+#define P052_WRITE_SINGLE_REGISTER      0x06
+#define P052_CMD_WRITE_COMMAND_REGISTER 0x41
+#define P052_CMD_READ_RAM               0x44
+#define P052_CMD_READ_EEPROM            0x46
 
-#define IR_METERSTATUS  0
-#define IR_ALARMSTATUS  1
-#define IR_OUTPUTSTATUS 2
-#define IR_SPACE_CO2    3
+#define P052_IR_METERSTATUS  0
+#define P052_IR_ALARMSTATUS  1
+#define P052_IR_OUTPUTSTATUS 2
+#define P052_IR_SPACE_CO2    3
 
-#define HR_ACK_REG      0
-#define HR_SPACE_CO2    3
-#define HR_ABC_PERIOD   31
+#define P052_HR_ACK_REG      0
+#define P052_HR_SPACE_CO2    3
+#define P052_HR_ABC_PERIOD   31
 
-#define MODBUS_RECEIVE_BUFFER 256
-#define MODBUS_SLAVE_ADDRESS 0xFE  // Modbus "any address"
+#define P052_MODBUS_RECEIVE_BUFFER 256
+#define P052_MODBUS_SLAVE_ADDRESS  0xFE  // Modbus "any address"
+
+#define MODBUS_EXCEPTION_ILLEGAL_FUNCTION          1
+#define MODBUS_EXCEPTION_ILLEGAL_DATA_ADDRESS      2
+#define MODBUS_EXCEPTION_ILLEGAL_DATA_VALUE        3
+#define MODBUS_EXCEPTION_SLAVE_OR_SERVER_FAILURE   4
+#define MODBUS_EXCEPTION_ACKNOWLEDGE               5
+#define MODBUS_EXCEPTION_SLAVE_OR_SERVER_BUSY      6
+#define MODBUS_EXCEPTION_NEGATIVE_ACKNOWLEDGE      7
+#define MODBUS_EXCEPTION_MEMORY_PARITY             8
+#define MODBUS_EXCEPTION_NOT_DEFINED               9
+#define MODBUS_EXCEPTION_GATEWAY_PATH             10
+#define MODBUS_EXCEPTION_GATEWAY_TARGET           11
+
+/* Additional error codes for the Plugin_052_processCommand return values */
+#define Plugin_052_MODBUS_BADCRC  (MODBUS_EXCEPTION_GATEWAY_TARGET + 1)
+#define Plugin_052_MODBUS_BADDATA (MODBUS_EXCEPTION_GATEWAY_TARGET + 2)
+#define Plugin_052_MODBUS_BADEXC  (MODBUS_EXCEPTION_GATEWAY_TARGET + 3)
+#define Plugin_052_MODBUS_UNKEXC  (MODBUS_EXCEPTION_GATEWAY_TARGET + 4)
+#define Plugin_052_MODBUS_MDATA   (MODBUS_EXCEPTION_GATEWAY_TARGET + 5)
+#define Plugin_052_MODBUS_BADSLAVE (MODBUS_EXCEPTION_GATEWAY_TARGET + 6)
+
 
 byte _plugin_052_sendframe[8] = {0};
-byte _plugin_052_sendframe_length = 0;
+byte _plugin_052_sendframe_used = 0;
+byte _plugin_052_recv_buf[P052_MODBUS_RECEIVE_BUFFER] = {0xff};
+byte _plugin_052_recv_buf_used = 0;
 boolean Plugin_052_init = false;
 
 #include <SoftwareSerial.h>
@@ -124,7 +150,7 @@ boolean Plugin_052(byte function, struct EventStruct *event, String& string)
         Plugin_052_SoftSerial = new SoftwareSerial(Settings.TaskDevicePin1[event->TaskIndex],
                                                    Settings.TaskDevicePin2[event->TaskIndex]);
         success = true;
-        Plugin_052_modbus_log_MEI(MODBUS_SLAVE_ADDRESS);
+        Plugin_052_modbus_log_MEI(P052_MODBUS_SLAVE_ADDRESS);
         break;
       }
 
@@ -217,14 +243,35 @@ boolean Plugin_052(byte function, struct EventStruct *event, String& string)
   return success;
 }
 
-void Plugin_052_AddModRTU_CRC() {
-  // CRC-calculation
-  byte checksumHi = 0;
-  byte checksumLo = 0;
-  unsigned int crc = Plugin_052_ModRTU_CRC(_plugin_052_sendframe, _plugin_052_sendframe_length, checksumHi, checksumLo);
-  _plugin_052_sendframe[_plugin_052_sendframe_length] = checksumLo;
-  _plugin_052_sendframe[_plugin_052_sendframe_length + 1] = checksumHi;
+// Read from RAM or EEPROM
+void Plugin_052_buildRead(
+              byte slaveAddress,
+              byte functionCode,
+              short startAddress,
+              byte number_bytes)
+{
+  _plugin_052_sendframe[0] = slaveAddress;
+  _plugin_052_sendframe[1] = functionCode;
+  _plugin_052_sendframe[2] = (byte)(startAddress >> 8);
+  _plugin_052_sendframe[3] = (byte)(startAddress & 0xFF);
+  _plugin_052_sendframe[4] = number_bytes;
+  _plugin_052_sendframe_used = 5;
 }
+
+// Write to the Special Control Register (SCR)
+void Plugin_052_buildWriteCommandRegister(
+              byte slaveAddress,
+              byte value)
+{
+  _plugin_052_sendframe[0] = slaveAddress;
+  _plugin_052_sendframe[1] = P052_CMD_WRITE_COMMAND_REGISTER;
+  _plugin_052_sendframe[2] = 0;    // Address-Hi SCR  (0x0060)
+  _plugin_052_sendframe[3] = 0x60; // Address-Lo SCR
+  _plugin_052_sendframe[4] = 1; // Count
+  _plugin_052_sendframe[5] = value;
+  _plugin_052_sendframe_used = 6;
+}
+
 
 void Plugin_052_buildFrame(
               byte slaveAddress,
@@ -235,10 +282,10 @@ void Plugin_052_buildFrame(
   _plugin_052_sendframe[0] = slaveAddress;
   _plugin_052_sendframe[1] = functionCode;
   _plugin_052_sendframe[2] = (byte)(startAddress >> 8);
-  _plugin_052_sendframe[3] = (byte)(startAddress);
+  _plugin_052_sendframe[3] = (byte)(startAddress & 0xFF);
   _plugin_052_sendframe[4] = (byte)(parameter >> 8);
-  _plugin_052_sendframe[5] = (byte)(parameter);
-  _plugin_052_sendframe_length = 6;
+  _plugin_052_sendframe[5] = (byte)(parameter & 0xFF);
+  _plugin_052_sendframe_used = 6;
 }
 
 void Plugin_052_build_modbus_MEI_frame(
@@ -251,181 +298,219 @@ void Plugin_052_build_modbus_MEI_frame(
   _plugin_052_sendframe[2] = 0x0E;
   _plugin_052_sendframe[3] = device_id;
   _plugin_052_sendframe[4] = object_id;
-  _plugin_052_sendframe_length = 5;
+  _plugin_052_sendframe_used = 5;
 }
 
-byte Plugin_052_parse_modbus_MEI_response(byte* receive_buf, byte length) {
+String Plugin_052_parse_modbus_MEI_response(byte& next_object_id, bool& more_follows) {
+  String result;
+  if (_plugin_052_recv_buf_used < 8) {
+    // Too small.
+    addLog(LOG_LEVEL_INFO, String(F("MEI response too small: ")) + _plugin_052_recv_buf_used);
+    next_object_id = 0xFF;
+    more_follows = false;
+    return result;
+  }
   int pos = 3;  // Data skipped: slave_address, FunctionCode, MEI type
-  const byte device_id = receive_buf[pos++];
-  const byte conformity_level = receive_buf[pos++];
-  const bool more_follows = receive_buf[pos++] != 0;
-  const byte next_object_id = receive_buf[pos++];
-  const byte number_objects = receive_buf[pos++];
+  const byte device_id = _plugin_052_recv_buf[pos++];
+  const byte conformity_level = _plugin_052_recv_buf[pos++];
+  more_follows = _plugin_052_recv_buf[pos++] != 0;
+  next_object_id = _plugin_052_recv_buf[pos++];
+  const byte number_objects = _plugin_052_recv_buf[pos++];
   byte object_id = 0;
   for (int i = 0; i < number_objects; ++i) {
-    object_id = receive_buf[pos++];
-    const byte object_length = receive_buf[pos++];
-    String object_value;
-    object_value.reserve(object_length);
-    for (int c = 0; c < object_length; ++c) {
-      object_value += char(receive_buf[pos++]);
+    if ((pos + 3) < _plugin_052_recv_buf_used) {
+      object_id = _plugin_052_recv_buf[pos++];
+      const byte object_length = _plugin_052_recv_buf[pos++];
+      if ((pos + object_length) < _plugin_052_recv_buf_used) {
+        String object_name;
+        switch (object_id) {
+          case 0: object_name = F("VendorName"); break;
+          case 1: object_name = F("ProductCode"); break;
+          case 2: object_name = F("MajorMinorRevision"); break;
+          case 3: object_name = F("VendorUrl"); break;
+          case 4: object_name = F("ProductName"); break;
+          case 5: object_name = F("ModelName"); break;
+          case 6: object_name = F("UserApplicationName"); break;
+          case 0x80: object_name = F("MemoryMapVersion"); break;
+          case 0x81: object_name = F("Firmware Rev."); break;
+          case 0x82: object_name = F("Sensor S/N"); break;
+          case 0x83: object_name = F("Sensor type"); break;
+          default:
+            object_name = F("0x");
+            object_name += String(object_id, HEX);
+            break;
+        }
+        String object_value;
+        if (object_id < 0x80) {
+          // Parse as type String
+          object_value.reserve(object_length);
+          for (int c = 0; c < object_length; ++c) {
+            object_value += char(_plugin_052_recv_buf[pos++]);
+          }
+        } else {
+          object_value.reserve(2*object_length + 2);
+          unsigned int object_value_int = 0;
+          for (int c = 0; c < object_length; ++c) {
+            object_value_int = object_value_int << 8 | _plugin_052_recv_buf[pos++];
+          }
+          object_value = F("0x");
+          object_value += String(object_value_int, HEX);
+        }
+        if (i != 0) {
+          // Append to existing description
+          result += String(F(",  "));
+        }
+        result += object_name;
+        result += String(F(": "));
+        result += object_value;
+      }
     }
-    String object_name;
-    switch (object_id) {
-      case 0: object_name = F("VendorName"); break;
-      case 1: object_name = F("ProductCode"); break;
-      case 2: object_name = F("MajorMinorRevision"); break;
-      case 3: object_name = F("VendorUrl"); break;
-      case 4: object_name = F("ProductName"); break;
-      case 5: object_name = F("ModelName"); break;
-      case 6: object_name = F("UserApplicationName"); break;
-      default:
-        object_name = int(object_id);
-        break;
-    }
-    addLog(LOG_LEVEL_INFO, String(F("Modbus MEI ")) + object_name + String(F(": ")) + object_value);
   }
-  if (more_follows) return next_object_id;
-  if (object_id < 0xFF) return object_id + 1;
-  return 0;
+  return result;
 }
 
-// Check checksum in buffer with buffer length len
-bool Plugin_052_validChecksum(byte* buf, int len) {
-  if (len < 4) {
-    // too short
-    return false;
+String Plugin_052_log_buffer(byte* buffer, int length) {
+  String log;
+  log.reserve(3 * length + 5);
+  for (int i = 0; i < length; ++i) {
+    log += String(buffer[i], HEX);
+    log += F(" ");
   }
-  byte checksumHi = 0;
-  byte checksumLo = 0;
-  Plugin_052_ModRTU_CRC(buf, (len - 2), checksumHi, checksumLo);
-  if (buf[len - 2] == checksumLo && buf[len - 1] == checksumHi) {
-    return true;
-  }
-  String log = F("Modbus Checksum Failure");
-  addLog(LOG_LEVEL_INFO, log);
-  return false;
+  log += F("(");
+  log += length;
+  log += F(")");
+  return log;
 }
 
-bool Plugin_052_processModbusException(byte received_functionCode, byte value) {
-  if ((received_functionCode & 0x80) == 0) {
-    return true;
-  }
+void Plugin_052_logModbusException(byte value) {
+  if (value == 0) return;
   // Exception Response, see: http://digital.ni.com/public.nsf/allkb/E40CA0CFA0029B2286256A9900758E06?OpenDocument
+  String log = F("Modbus Exception - ");
   switch (value) {
-    case 1: {
-      // The function code received in the query is not an allowable action for the slave.
-      // If a Poll Program Complete command was issued, this code indicates that no program function preceded it.
-      addLog(LOG_LEVEL_INFO, F("Illegal Function"));
-      break;
-    }
-    case 2: {
-      // The data address received in the query is not an allowable address for the slave.
-      addLog(LOG_LEVEL_INFO, F("Illegal Data Address"));
-      break;
-    }
-    case 3: {
-      // A value contained in the query data field is not an allowable value for the slave
-      addLog(LOG_LEVEL_INFO, F("Illegal Data Value"));
-      break;
-    }
-    case 4: {
-      // An unrecoverable error occurred while the slave was attempting to perform the requested action
-      addLog(LOG_LEVEL_INFO, F("Slave Device Failure"));
-      break;
-    }
-    case 5: {
-      // The slave has accepted the request and is processing it, but a long duration of time will be
-      // required to do so. This response is returned to prevent a timeout error from occurring in the master.
-      // The master can next issue a Poll Program Complete message to determine if processing is completed.
-      addLog(LOG_LEVEL_INFO, F("Acknowledge"));
-      break;
-    }
-    case 6: {
-      // The slave is engaged in processing a long-duration program command.
-      // The master should retransmit the message later when the slave is free.
-      addLog(LOG_LEVEL_INFO, F("Slave Device Busy"));
-      break;
-    }
+    case MODBUS_EXCEPTION_ILLEGAL_FUNCTION: {
+          // The function code received in the query is not an allowable action for the slave.
+          // If a Poll Program Complete command was issued, this code indicates that no program function preceded it.
+          log += F("Illegal Function");
+          break;
+        }
+    case MODBUS_EXCEPTION_ILLEGAL_DATA_ADDRESS: {
+          // The data address received in the query is not an allowable address for the slave.
+          log += F("Illegal Data Address");
+          break;
+        }
+    case MODBUS_EXCEPTION_ILLEGAL_DATA_VALUE: {
+          // A value contained in the query data field is not an allowable value for the slave
+          log += F("Illegal Data Value");
+          break;
+        }
+    case MODBUS_EXCEPTION_SLAVE_OR_SERVER_FAILURE: {
+          // An unrecoverable error occurred while the slave was attempting to perform the requested action
+          log += F("Slave Device Failure");
+          break;
+        }
+    case MODBUS_EXCEPTION_ACKNOWLEDGE: {
+          // The slave has accepted the request and is processing it, but a long duration of time will be
+          // required to do so. This response is returned to prevent a timeout error from occurring in the master.
+          // The master can next issue a Poll Program Complete message to determine if processing is completed.
+          log += F("Acknowledge");
+          break; // Is this an error?
+        }
+    case MODBUS_EXCEPTION_SLAVE_OR_SERVER_BUSY: {
+          // The slave is engaged in processing a long-duration program command.
+          // The master should retransmit the message later when the slave is free.
+          log += F("Slave Device Busy");
+          break;
+        }
+    case MODBUS_EXCEPTION_NEGATIVE_ACKNOWLEDGE: log += F("Negative acknowledge"); break;
+    case MODBUS_EXCEPTION_MEMORY_PARITY:  log += F("Memory parity error"); break;
+    case MODBUS_EXCEPTION_GATEWAY_PATH:   log += F("Gateway path unavailable"); break;
+    case MODBUS_EXCEPTION_GATEWAY_TARGET: log += F("Target device failed to respond"); break;
+    case Plugin_052_MODBUS_BADCRC:   log += F("Invalid CRC"); break;
+    case Plugin_052_MODBUS_BADDATA:  log += F("Invalid data"); break;
+    case Plugin_052_MODBUS_BADEXC:   log += F("Invalid exception code"); break;
+    case Plugin_052_MODBUS_MDATA:    log += F("Too many data"); break;
+    case Plugin_052_MODBUS_BADSLAVE: log += F("Response not from requested slave"); break;
     default:
-      addLog(LOG_LEVEL_INFO, String(F("Unknown Exception. function: "))+ received_functionCode + String(F(" Exception code: ")) + value);
+      log += String(F("Unknown Exception code: ")) + value;
       break;
   }
-  return false;
+  log += F(" - sent: ");
+  log += Plugin_052_log_buffer(_plugin_052_sendframe, _plugin_052_sendframe_used);
+  log += F(" - received: ");
+  log += Plugin_052_log_buffer(_plugin_052_recv_buf, _plugin_052_recv_buf_used);
+  addLog(LOG_LEVEL_INFO, log);
 }
 
-int Plugin_052_processCommand()
+byte Plugin_052_processCommand()
 {
-  Plugin_052_AddModRTU_CRC();
-  Plugin_052_SoftSerial->write(_plugin_052_sendframe, _plugin_052_sendframe_length + 2); //Send the byte array
+  // CRC-calculation
+  unsigned int crc = Plugin_052_ModRTU_CRC(_plugin_052_sendframe, _plugin_052_sendframe_used);
+  // Note, this number has low and high bytes swapped, so use it accordingly (or swap bytes)
+  byte checksumHi = (byte)((crc >> 8) & 0xFF);
+  byte checksumLo = (byte)(crc & 0xFF);
+  _plugin_052_sendframe[_plugin_052_sendframe_used++] = checksumLo;
+  _plugin_052_sendframe[_plugin_052_sendframe_used++] = checksumHi;
+  //Send the byte array
+  Plugin_052_SoftSerial->write(_plugin_052_sendframe, _plugin_052_sendframe_used);
   delay(50);
 
   // Read answer from sensor
-  int ByteCounter = 0;
-  byte recv_buf[MODBUS_RECEIVE_BUFFER] = {0xff};
-  while(Plugin_052_SoftSerial->available() && ByteCounter < MODBUS_RECEIVE_BUFFER) {
-    recv_buf[ByteCounter] = Plugin_052_SoftSerial->read();
-    ByteCounter++;
+  _plugin_052_recv_buf_used = 0;
+  while(Plugin_052_SoftSerial->available() && _plugin_052_recv_buf_used < P052_MODBUS_RECEIVE_BUFFER) {
+    _plugin_052_recv_buf[_plugin_052_recv_buf_used++] = Plugin_052_SoftSerial->read();
   }
-  if (!Plugin_052_validChecksum(recv_buf, ByteCounter)) {
-    return 0;
+
+  byte return_value = 0;
+  // Check for MODBUS exception
+  const byte received_functionCode = _plugin_052_recv_buf[1];
+  if ((received_functionCode & 0x80) != 0) {
+    return_value = _plugin_052_recv_buf[2];
   }
-  if(Plugin_052_processModbusException(recv_buf[1], recv_buf[2])) {
-    // Valid response, no exception
-    switch(recv_buf[1]) {
-      case 0x2B: // Read Device Identification
-      {
-        return Plugin_052_parse_modbus_MEI_response(recv_buf, ByteCounter);
-      }
-      default:
-        break;
-    }
-    long value = (recv_buf[3] << 8) | (recv_buf[4]);
-    return value;
+  // Check checksum
+  crc = Plugin_052_ModRTU_CRC(_plugin_052_recv_buf, _plugin_052_recv_buf_used);
+  if (crc != 0u) {
+    return_value = Plugin_052_MODBUS_BADCRC;
   }
-  return -1;
+  return return_value;
 }
 
 int Plugin_052_readInputRegister(short address) {
   // Only read 1 register
-  return Plugin_052_processRegister(MODBUS_SLAVE_ADDRESS, READ_INPUT_REGISTERS, address, 1);
+  return Plugin_052_processRegister(P052_MODBUS_SLAVE_ADDRESS, P052_READ_INPUT_REGISTERS, address, 1);
 }
 
 int Plugin_052_readHoldingRegister(short address) {
   // Only read 1 register
-  return Plugin_052_processRegister(MODBUS_SLAVE_ADDRESS, READ_HOLDING_REGISTERS, address, 1);
+  return Plugin_052_processRegister(P052_MODBUS_SLAVE_ADDRESS, P052_READ_HOLDING_REGISTERS, address, 1);
 }
 
 // Write to holding register.
 int Plugin_052_writeSingleRegister(short address, short value) {
-  return Plugin_052_processRegister(MODBUS_SLAVE_ADDRESS, WRITE_SINGLE_REGISTER, address, value);
+  return Plugin_052_processRegister(P052_MODBUS_SLAVE_ADDRESS, P052_WRITE_SINGLE_REGISTER, address, value);
 }
 
 void Plugin_052_modbus_log_MEI(byte slaveAddress) {
-  for (int device_id = 1; device_id <= 4; ++device_id) {
-    // Basic, Regular, Extended
-    byte object_id_lo = 0;
-    byte object_id_hi = 0xff;
-    switch (device_id) {
-      case 1: // basic
-        object_id_lo = 0;
-        object_id_hi = 2;
-        break;
-      case 2: // Regular
-        object_id_lo = 0x03;
-        object_id_hi = 0x06;
-        break;
-      case 3: // Extended
-        object_id_lo = 0x80;
-        object_id_hi = 0x83;
-        break;
+  int device_id = 4;
+  bool more_follows = true;
+  byte object_id = 0;
+  byte next_object_id = 0;
+  while (more_follows) {
+    Plugin_052_build_modbus_MEI_frame(slaveAddress, device_id, object_id);
+    byte process_result = Plugin_052_processCommand();
+    if (process_result == 0) {
+      String result = Plugin_052_parse_modbus_MEI_response(next_object_id, more_follows);
+      if (result.length() > 0) {
+        addLog(LOG_LEVEL_INFO, result);
+      }
+    } else {
+      if (process_result != MODBUS_EXCEPTION_ILLEGAL_DATA_ADDRESS) {
+        Plugin_052_logModbusException(process_result);
+      }
+      more_follows = false;
     }
-    bool more_follows = true;
-    byte object_id = object_id_lo;
-    while (more_follows) {
-      Plugin_052_build_modbus_MEI_frame(slaveAddress, device_id, object_id);
-      object_id = Plugin_052_processCommand();
-      more_follows = object_id != 0;// && object_id > object_id_lo && object_id <= object_id_hi;
+    if (!more_follows && object_id < 0xFF) {
+      more_follows = true;
+      object_id++;
     }
   }
 }
@@ -437,7 +522,12 @@ int Plugin_052_processRegister(
               short parameter)
 {
   Plugin_052_buildFrame(slaveAddress, functionCode, startAddress, parameter);
-  return Plugin_052_processCommand();
+  byte process_result = Plugin_052_processCommand();
+  if (process_result == 0) {
+    return (_plugin_052_recv_buf[3] << 8) | (_plugin_052_recv_buf[4]);
+  }
+  Plugin_052_logModbusException(process_result);
+  return -1;
 }
 
 int Plugin_052_readErrorStatus(void)
@@ -493,10 +583,9 @@ int Plugin_052_readABCperiod(void) {
 }
 
 // Compute the MODBUS RTU CRC
-unsigned int Plugin_052_ModRTU_CRC(byte* buf, int len, byte& checksumHi, byte& checksumLo)
+unsigned int Plugin_052_ModRTU_CRC(byte* buf, int len)
 {
   unsigned int crc = 0xFFFF;
-
   for (int pos = 0; pos < len; pos++) {
     crc ^= (unsigned int)buf[pos];          // XOR byte into least sig. byte of crc
 
@@ -509,9 +598,6 @@ unsigned int Plugin_052_ModRTU_CRC(byte* buf, int len, byte& checksumHi, byte& c
         crc >>= 1;                    // Just shift right
     }
   }
-  // Note, this number has low and high bytes swapped, so use it accordingly (or swap bytes)
-  checksumHi = (byte)((crc >> 8) & 0xFF);
-  checksumLo = (byte)(crc & 0xFF);
   return crc;
 }
 
