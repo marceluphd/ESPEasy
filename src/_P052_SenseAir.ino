@@ -67,6 +67,7 @@ byte _plugin_052_sendframe_used = 0;
 byte _plugin_052_recv_buf[P052_MODBUS_RECEIVE_BUFFER] = {0xff};
 byte _plugin_052_recv_buf_used = 0;
 boolean Plugin_052_init = false;
+String detected_device_description;
 
 #include <SoftwareSerial.h>
 SoftwareSerial *Plugin_052_SoftSerial;
@@ -74,7 +75,6 @@ SoftwareSerial *Plugin_052_SoftSerial;
 boolean Plugin_052(byte function, struct EventStruct *event, String& string)
 {
   boolean success = false;
-
   switch (function)
   {
 
@@ -131,7 +131,12 @@ boolean Plugin_052(byte function, struct EventStruct *event, String& string)
           byte choice = Settings.TaskDevicePluginConfig[event->TaskIndex][0];
           String options[6] = { F("Error Status"), F("Carbon Dioxide"), F("Temperature"), F("Humidity"), F("Relay Status"), F("Temperature Adjustment") };
           addFormSelector(string, F("Sensor"), F("plugin_052"), 6, options, NULL, choice);
-
+          String detectedString;
+          if (detected_device_description.length() > 0) {
+            detectedString += detected_device_description;
+            detectedString += F("detected");
+          }
+          addFormNote(string, detectedString);
           success = true;
           break;
       }
@@ -151,6 +156,8 @@ boolean Plugin_052(byte function, struct EventStruct *event, String& string)
                                                    Settings.TaskDevicePin2[event->TaskIndex]);
         success = true;
         Plugin_052_modbus_log_MEI(P052_MODBUS_SLAVE_ADDRESS);
+        detected_device_description = Plugin_052_getDevice_description(P052_MODBUS_SLAVE_ADDRESS);
+        addLog(LOG_LEVEL_INFO, detected_device_description);
         break;
       }
 
@@ -243,6 +250,29 @@ boolean Plugin_052(byte function, struct EventStruct *event, String& string)
   return success;
 }
 
+String Plugin_052_getDevice_description(byte slaveAddress) {
+  bool more_follows = true;
+  byte next_object_id = 0;
+  unsigned int object_value_int;
+  String description;
+  String obj_text;
+  for (byte object_id = 0; object_id < 7; ++object_id) {
+    if (0 == Plugin_052_modbus_get_MEI(slaveAddress, object_id, obj_text, object_value_int, next_object_id, more_follows)) {
+//      description += Plugin_052_MEI_objectid_to_name(object_id);
+//      description += F(": ");
+      description += obj_text;
+      description += F(" - ");
+    }
+  }
+  String serialnr;
+  if (0 == Plugin_052_modbus_get_MEI(slaveAddress, 0x82, serialnr, object_value_int, next_object_id, more_follows)) {
+    description += F("S/N: ");
+    description += serialnr;
+    description += F(" - ");
+  }
+  return description;
+}
+
 // Read from RAM or EEPROM
 void Plugin_052_buildRead(
               byte slaveAddress,
@@ -301,7 +331,25 @@ void Plugin_052_build_modbus_MEI_frame(
   _plugin_052_sendframe_used = 5;
 }
 
-String Plugin_052_parse_modbus_MEI_response(byte& next_object_id, bool& more_follows) {
+String Plugin_052_MEI_objectid_to_name(byte object_id) {
+  switch (object_id) {
+    case 0: return F("VendorName");
+    case 1: return F("ProductCode");
+    case 2: return F("MajorMinorRevision");
+    case 3: return F("VendorUrl");
+    case 4: return F("ProductName");
+    case 5: return F("ModelName");
+    case 6: return F("UserApplicationName");
+    case 0x80: return F("MemoryMapVersion");
+    case 0x81: return F("Firmware Rev.");
+    case 0x82: return F("Sensor S/N");
+    case 0x83: return F("Sensor type");
+    default:
+      return String(F("0x")) + String(object_id, HEX);
+  }
+}
+
+String Plugin_052_parse_modbus_MEI_response(unsigned int& object_value_int, byte& next_object_id, bool& more_follows) {
   String result;
   if (_plugin_052_recv_buf_used < 8) {
     // Too small.
@@ -322,46 +370,29 @@ String Plugin_052_parse_modbus_MEI_response(byte& next_object_id, bool& more_fol
       object_id = _plugin_052_recv_buf[pos++];
       const byte object_length = _plugin_052_recv_buf[pos++];
       if ((pos + object_length) < _plugin_052_recv_buf_used) {
-        String object_name;
-        switch (object_id) {
-          case 0: object_name = F("VendorName"); break;
-          case 1: object_name = F("ProductCode"); break;
-          case 2: object_name = F("MajorMinorRevision"); break;
-          case 3: object_name = F("VendorUrl"); break;
-          case 4: object_name = F("ProductName"); break;
-          case 5: object_name = F("ModelName"); break;
-          case 6: object_name = F("UserApplicationName"); break;
-          case 0x80: object_name = F("MemoryMapVersion"); break;
-          case 0x81: object_name = F("Firmware Rev."); break;
-          case 0x82: object_name = F("Sensor S/N"); break;
-          case 0x83: object_name = F("Sensor type"); break;
-          default:
-            object_name = F("0x");
-            object_name += String(object_id, HEX);
-            break;
-        }
         String object_value;
         if (object_id < 0x80) {
           // Parse as type String
           object_value.reserve(object_length);
+          object_value_int = static_cast<unsigned int>(-1);
           for (int c = 0; c < object_length; ++c) {
             object_value += char(_plugin_052_recv_buf[pos++]);
           }
         } else {
           object_value.reserve(2*object_length + 2);
-          unsigned int object_value_int = 0;
+          object_value_int = 0;
           for (int c = 0; c < object_length; ++c) {
             object_value_int = object_value_int << 8 | _plugin_052_recv_buf[pos++];
           }
           object_value = F("0x");
-          object_value += String(object_value_int, HEX);
+          String hexvalue(object_value_int, HEX);
+          hexvalue.toUpperCase();
+          object_value += hexvalue;
         }
         if (i != 0) {
           // Append to existing description
           result += String(F(",  "));
         }
-        result += object_name;
-        result += String(F(": "));
         result += object_value;
       }
     }
@@ -373,7 +404,9 @@ String Plugin_052_log_buffer(byte* buffer, int length) {
   String log;
   log.reserve(3 * length + 5);
   for (int i = 0; i < length; ++i) {
-    log += String(buffer[i], HEX);
+    String hexvalue(buffer[i], HEX);
+    hexvalue.toUpperCase();
+    log += hexvalue;
     log += F(" ");
   }
   log += F("(");
@@ -504,37 +537,49 @@ int Plugin_052_writeSingleRegister(short address, short value) {
   return Plugin_052_processRegister(P052_MODBUS_SLAVE_ADDRESS, P052_WRITE_SINGLE_REGISTER, address, value);
 }
 
+byte Plugin_052_modbus_get_MEI(byte slaveAddress, byte object_id, String& result, unsigned int& object_value_int, byte& next_object_id, bool& more_follows) {
+  Plugin_052_build_modbus_MEI_frame(slaveAddress, 4, object_id);
+  const byte process_result = Plugin_052_processCommand();
+  if (process_result == 0) {
+    result = Plugin_052_parse_modbus_MEI_response(object_value_int, next_object_id, more_follows);
+  } else {
+    more_follows = false;
+  }
+  return process_result;
+}
+
 void Plugin_052_modbus_log_MEI(byte slaveAddress) {
   // Iterate over all Device identification items, using
   // Modbus command (0x2B / 0x0E) Read Device Identification
   // And add to log.
-  int device_id = 4;
   bool more_follows = true;
   byte object_id = 0;
   byte next_object_id = 0;
   while (more_follows) {
-    Plugin_052_build_modbus_MEI_frame(slaveAddress, device_id, object_id);
-    byte process_result = Plugin_052_processCommand();
+    String result;
+    unsigned int object_value_int;
+    const byte process_result =
+      Plugin_052_modbus_get_MEI(slaveAddress, object_id, result, object_value_int, next_object_id, more_follows);
     if (process_result == 0) {
-      String result = Plugin_052_parse_modbus_MEI_response(next_object_id, more_follows);
       if (result.length() > 0) {
-        addLog(LOG_LEVEL_INFO, result);
+        String log = Plugin_052_MEI_objectid_to_name(object_id);
+        log += F(": ");
+        log += result;
+        addLog(LOG_LEVEL_INFO, log);
       }
     } else {
-      bool mustLogException = true;
       switch (process_result) {
         case MODBUS_EXCEPTION_ILLEGAL_DATA_ADDRESS:
-          mustLogException = false;
+          // No need to log this exception when scanning.
           break;
         default:
+          Plugin_052_logModbusException(process_result);
           break;
       }
-      if (mustLogException) {
-        Plugin_052_logModbusException(process_result);
-      }
-      more_follows = false;
     }
-    if (!more_follows && object_id < 0x84) {
+    if (more_follows) {
+      object_id = next_object_id;
+    } else if (object_id < 0x84) {
       // Allow for scanning only the usual object ID's
       // This range is vendor specific
       more_follows = true;
