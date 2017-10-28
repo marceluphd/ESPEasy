@@ -450,26 +450,41 @@ byte Plugin_052_processCommand()
   byte checksumLo = (byte)(crc & 0xFF);
   _plugin_052_sendframe[_plugin_052_sendframe_used++] = checksumLo;
   _plugin_052_sendframe[_plugin_052_sendframe_used++] = checksumHi;
-  //Send the byte array
-  Plugin_052_SoftSerial->write(_plugin_052_sendframe, _plugin_052_sendframe_used);
-  delay(50);
 
-  // Read answer from sensor
-  _plugin_052_recv_buf_used = 0;
-  while(Plugin_052_SoftSerial->available() && _plugin_052_recv_buf_used < P052_MODBUS_RECEIVE_BUFFER) {
-    _plugin_052_recv_buf[_plugin_052_recv_buf_used++] = Plugin_052_SoftSerial->read();
-  }
-
+  int nrRetriesLeft = 2;
   byte return_value = 0;
-  // Check for MODBUS exception
-  const byte received_functionCode = _plugin_052_recv_buf[1];
-  if ((received_functionCode & 0x80) != 0) {
-    return_value = _plugin_052_recv_buf[2];
-  }
-  // Check checksum
-  crc = Plugin_052_ModRTU_CRC(_plugin_052_recv_buf, _plugin_052_recv_buf_used);
-  if (crc != 0u) {
-    return_value = Plugin_052_MODBUS_BADCRC;
+  while (nrRetriesLeft > 0) {
+    //Send the byte array
+    Plugin_052_SoftSerial->write(_plugin_052_sendframe, _plugin_052_sendframe_used);
+    delay(50);
+
+    // Read answer from sensor
+    _plugin_052_recv_buf_used = 0;
+    while(Plugin_052_SoftSerial->available() && _plugin_052_recv_buf_used < P052_MODBUS_RECEIVE_BUFFER) {
+      _plugin_052_recv_buf[_plugin_052_recv_buf_used++] = Plugin_052_SoftSerial->read();
+    }
+
+    // Check for MODBUS exception
+    const byte received_functionCode = _plugin_052_recv_buf[1];
+    if ((received_functionCode & 0x80) != 0) {
+      return_value = _plugin_052_recv_buf[2];
+    }
+    // Check checksum
+    crc = Plugin_052_ModRTU_CRC(_plugin_052_recv_buf, _plugin_052_recv_buf_used);
+    if (crc != 0u) {
+      return_value = Plugin_052_MODBUS_BADCRC;
+    }
+    switch (return_value) {
+      case MODBUS_EXCEPTION_ACKNOWLEDGE:
+      case MODBUS_EXCEPTION_SLAVE_OR_SERVER_BUSY:
+      case Plugin_052_MODBUS_BADCRC:
+        // Bad communication, makes sense to retry.
+        break;
+      default:
+        nrRetriesLeft = 0; // When not supported, does not make sense to retry.
+        break;
+    }
+    --nrRetriesLeft;
   }
   return return_value;
 }
@@ -490,6 +505,9 @@ int Plugin_052_writeSingleRegister(short address, short value) {
 }
 
 void Plugin_052_modbus_log_MEI(byte slaveAddress) {
+  // Iterate over all Device identification items, using
+  // Modbus command (0x2B / 0x0E) Read Device Identification
+  // And add to log.
   int device_id = 4;
   bool more_follows = true;
   byte object_id = 0;
@@ -503,14 +521,28 @@ void Plugin_052_modbus_log_MEI(byte slaveAddress) {
         addLog(LOG_LEVEL_INFO, result);
       }
     } else {
-      if (process_result != MODBUS_EXCEPTION_ILLEGAL_DATA_ADDRESS) {
+      bool mustLogException = true;
+      switch (process_result) {
+        case MODBUS_EXCEPTION_ILLEGAL_DATA_ADDRESS:
+          mustLogException = false;
+          break;
+        default:
+          break;
+      }
+      if (mustLogException) {
         Plugin_052_logModbusException(process_result);
       }
       more_follows = false;
     }
-    if (!more_follows && object_id < 0xFF) {
+    if (!more_follows && object_id < 0x84) {
+      // Allow for scanning only the usual object ID's
+      // This range is vendor specific
       more_follows = true;
       object_id++;
+      if (object_id == 7) {
+        // Skip range 0x07...0x7F
+        object_id = 0x80;
+      }
     }
   }
 }
