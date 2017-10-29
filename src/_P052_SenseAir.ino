@@ -22,12 +22,50 @@
 #define PLUGIN_NAME_052       "Gases - CO2 Senseair"
 #define PLUGIN_VALUENAME1_052 ""
 
+#define P052_MEASUREMENT_INTERVAL  60000L
+
 #define P052_READ_HOLDING_REGISTERS     0x03
 #define P052_READ_INPUT_REGISTERS       0x04
 #define P052_WRITE_SINGLE_REGISTER      0x06
-#define P052_CMD_WRITE_COMMAND_REGISTER 0x41
+
 #define P052_CMD_READ_RAM               0x44
 #define P052_CMD_READ_EEPROM            0x46
+#define P052_CMD_WRITE_RAM              0x41
+#define P052_CMD_WRITE_EEPROM           0x43
+
+// For layout and status flags in RAM/EEPROM, see document
+// "CO2-Engine-BLG_ELG configuration guide Rev 1_02.docx"
+
+// RAM layout
+#define P052_RAM_ADDR_ERROR_STATUS      0x1E // U8 (error flags)
+#define P052_RAM_ADDR_METER_STATUS      0x1D // U8 (status flags)
+#define P052_RAM_ADDR_ALARM_STATUS      0x1C // U8 (alarm flags)
+#define P052_RAM_ADDR_CO2               0x08 // S16 BLG: x.xxx%  ELG: x ppm
+#define P052_RAM_ADDR_SPACE_TEMPERATURE 0x12 // S16 x.xx °C
+#define P052_RAM_ADDR_RELATIVE_HUMIDITY 0x14 // S16 x.xx %
+#define P052_RAM_ADDR_MIXING_RATIO      0x16 // S16 x.xx g/kg
+#define P052_RAM_ADDR_HR1               0x40 // U16
+#define P052_RAM_ADDR_HR2               0x42 // U16
+#define P052_RAM_ADDR_ANIN4             0x69 // U16 x.xxx volt
+#define P052_RAM_ADDR_RTC               0x65 // U32 x seconds   (virtual real time clock)
+#define P052_RAM_ADDR_SCR               0x60 // U8 (special control register)
+
+// EEPROM layout
+#define P052_EEPROM_ADDR_METERCONTROL             0x03  // U8
+#define P052_EEPROM_ADDR_METERCONFIG              0x06  // U16
+#define P052_EEPROM_ADDR_ABC_PERIOD               0x40  // U16 ABC period in hours
+#define P052_EEPROM_ADDR_HEARTBEATPERIOD          0xA2  // U8 Period in seconds
+#define P052_EEPROM_ADDR_PUMPPERIOD               0xA3  // U8 Period in seconds
+#define P052_EEPROM_ADDR_MEASUREMENT_SLEEP_PERIOD 0xB0  // U24 Measurement period (unit = seconds)
+#define P052_EEPROM_ADDR_LOGGER_STRUCTURE_ADDRESS 0x200 // 16b Described in “BLG_ELG Logger Structure”
+
+// SCR (Special Control Register) commands
+#define P052_SCR_FORCE_START_MEASUREMENT   0x30
+#define P052_SCR_FORCE_STOP_MEASUREMENT    0x31
+#define P052_SCR_RESTART_LOGGER            0x32  // (logger data erased)
+#define P052_SCR_REINITIALIZE_LOGGER       0x33  // (logger data unaffected)
+#define P052_SCR_WRITE_TIMESTAMP_TO_LOGGER 0x34
+#define P052_SCR_SINGLE_MEASUREMENT        0x35
 
 #define P052_IR_METERSTATUS  0
 #define P052_IR_ALARMSTATUS  1
@@ -68,6 +106,9 @@ byte _plugin_052_recv_buf[P052_MODBUS_RECEIVE_BUFFER] = {0xff};
 byte _plugin_052_recv_buf_used = 0;
 boolean Plugin_052_init = false;
 String detected_device_description;
+
+unsigned int _plugin_052_last_measurement = 0;
+
 
 #include <SoftwareSerial.h>
 SoftwareSerial *Plugin_052_SoftSerial;
@@ -129,8 +170,8 @@ boolean Plugin_052(byte function, struct EventStruct *event, String& string)
     case PLUGIN_WEBFORM_LOAD:
       {
           byte choice = Settings.TaskDevicePluginConfig[event->TaskIndex][0];
-          String options[6] = { F("Error Status"), F("Carbon Dioxide"), F("Temperature"), F("Humidity"), F("Relay Status"), F("Temperature Adjustment") };
-          addFormSelector(string, F("Sensor"), F("plugin_052"), 6, options, NULL, choice);
+          String options[7] = { F("Error Status"), F("Carbon Dioxide"), F("Temperature"), F("Humidity"), F("Relay Status"), F("Temperature Adjustment"), F("CO2 read from RAM") };
+          addFormSelector(string, F("Sensor"), F("plugin_052"), 7, options, NULL, choice);
           String detectedString;
           if (detected_device_description.length() > 0) {
             detectedString += detected_device_description;
@@ -190,17 +231,6 @@ boolean Plugin_052(byte function, struct EventStruct *event, String& string)
               case 1:
               {
                   int co2 = Plugin_052_readCo2();
-/*                  for (int i = 0; i< 32; ++i) {
-                    int value = Plugin_052_readInputRegister(i);
-                    if (value != -1) {
-                      log += F("(");
-                      log += i;
-                      log += F(";");
-                      log += value;
-                      log += F("), ");
-                    }
-                  }
-                  */
                   UserVar[event->BaseVarIndex] = co2;
                   log += F("co2 = ");
                   log += co2;
@@ -238,6 +268,15 @@ boolean Plugin_052(byte function, struct EventStruct *event, String& string)
                   log += temperatureAdjustment;
                   break;
               }
+              case 6:
+              {
+                  int co2 = Plugin_052_readCo2_from_RAM();
+                  UserVar[event->BaseVarIndex] = co2;
+                  log += F("co2 from RAM = ");
+                  log += co2;
+                  break;
+              }
+
           }
           addLog(LOG_LEVEL_INFO, log);
 
@@ -280,7 +319,7 @@ String Plugin_052_getDevice_description(byte slaveAddress) {
 }
 
 // Read from RAM or EEPROM
-void Plugin_052_buildRead(
+void Plugin_052_buildRead_RAM_EEPROM(
               byte slaveAddress,
               byte functionCode,
               short startAddress,
@@ -300,7 +339,7 @@ void Plugin_052_buildWriteCommandRegister(
               byte value)
 {
   _plugin_052_sendframe[0] = slaveAddress;
-  _plugin_052_sendframe[1] = P052_CMD_WRITE_COMMAND_REGISTER;
+  _plugin_052_sendframe[1] = P052_CMD_WRITE_RAM;
   _plugin_052_sendframe[2] = 0;    // Address-Hi SCR  (0x0060)
   _plugin_052_sendframe[3] = 0x60; // Address-Lo SCR
   _plugin_052_sendframe[4] = 1; // Count
@@ -421,6 +460,29 @@ String Plugin_052_log_buffer(byte* buffer, int length) {
   return log;
 }
 
+bool Plugin_052_check_error_status() {
+  byte error_status = Plugin_052_read_RAM_EEPROM(P052_CMD_READ_RAM, P052_RAM_ADDR_ERROR_STATUS, 1);
+  if (error_status == 0) return true;
+  String log = F("P052 Error status:");
+  for (int i = 0; i < 8; ++i) {
+    if (getBitOfInt(error_status, i)) {
+      log += F(" (");
+      switch (i) {
+        case 0: log += F("fatal"); break;
+        case 1: log += F("CO2"); break;
+        case 2: log += F("T/H comm"); break;
+        case 4: log += F("detector temp range"); break;
+        case 5: log += F("CO2 range"); break;
+        case 6: log += F("mem err."); break;
+        case 7: log += F("room temp range"); break;
+        default: log += F("unknown"); break;
+      }
+      log += F(")");
+    }
+  }
+  addLog(LOG_LEVEL_INFO, log);
+}
+
 void Plugin_052_logModbusException(byte value) {
   if (value == 0) return;
   // Exception Response, see: http://digital.ni.com/public.nsf/allkb/E40CA0CFA0029B2286256A9900758E06?OpenDocument
@@ -530,17 +592,18 @@ byte Plugin_052_processCommand()
 
 int Plugin_052_readInputRegister(short address) {
   // Only read 1 register
-  return Plugin_052_processRegister(P052_MODBUS_SLAVE_ADDRESS, P052_READ_INPUT_REGISTERS, address, 1);
+  return Plugin_052_process_16b_register(P052_MODBUS_SLAVE_ADDRESS, P052_READ_INPUT_REGISTERS, address, 1);
 }
 
 int Plugin_052_readHoldingRegister(short address) {
   // Only read 1 register
-  return Plugin_052_processRegister(P052_MODBUS_SLAVE_ADDRESS, P052_READ_HOLDING_REGISTERS, address, 1);
+  return Plugin_052_process_16b_register(P052_MODBUS_SLAVE_ADDRESS, P052_READ_HOLDING_REGISTERS, address, 1);
 }
 
 // Write to holding register.
 int Plugin_052_writeSingleRegister(short address, short value) {
-  return Plugin_052_processRegister(P052_MODBUS_SLAVE_ADDRESS, P052_WRITE_SINGLE_REGISTER, address, value);
+  // GN: Untested, will probably not work
+  return Plugin_052_process_16b_register(P052_MODBUS_SLAVE_ADDRESS, P052_WRITE_SINGLE_REGISTER, address, value);
 }
 
 byte Plugin_052_modbus_get_MEI(byte slaveAddress, byte object_id, String& result, unsigned int& object_value_int, byte& next_object_id, bool& more_follows) {
@@ -598,16 +661,40 @@ void Plugin_052_modbus_log_MEI(byte slaveAddress) {
   }
 }
 
-int Plugin_052_processRegister(
+int Plugin_052_process_16b_register(
               byte slaveAddress,
               byte functionCode,
               short startAddress,
               short parameter)
 {
   Plugin_052_buildFrame(slaveAddress, functionCode, startAddress, parameter);
-  byte process_result = Plugin_052_processCommand();
+  const byte process_result = Plugin_052_processCommand();
   if (process_result == 0) {
     return (_plugin_052_recv_buf[3] << 8) | (_plugin_052_recv_buf[4]);
+  }
+  Plugin_052_logModbusException(process_result);
+  return -1;
+}
+
+int Plugin_052_writeSpecialCommandRegister(byte command) {
+  Plugin_052_buildWriteCommandRegister(P052_MODBUS_SLAVE_ADDRESS, command);
+  const byte process_result = Plugin_052_processCommand();
+  if (process_result == 0) return 0;
+  Plugin_052_logModbusException(process_result);
+  return -1;
+}
+
+unsigned int Plugin_052_read_RAM_EEPROM(byte command, byte startAddress, byte nrBytes)
+{
+  Plugin_052_buildRead_RAM_EEPROM(P052_MODBUS_SLAVE_ADDRESS, command, startAddress, nrBytes);
+  const byte process_result = Plugin_052_processCommand();
+  if (process_result == 0) {
+    unsigned int result = 0;
+    for (int i = 0; i < _plugin_052_recv_buf[2]; ++i) {
+      // Most significant byte at lower address
+      result = (result << 8) | _plugin_052_recv_buf[i + 3];
+    }
+    return result;
   }
   Plugin_052_logModbusException(process_result);
   return -1;
@@ -621,6 +708,68 @@ int Plugin_052_readErrorStatus(void)
 int Plugin_052_readCo2(void)
 {
   return Plugin_052_readInputRegister(0x03);
+}
+
+int Plugin_052_readCo2_from_RAM(void) {
+  bool valid_measurement = Plugin_052_prepare_single_measurement_from_RAM();
+  short co2 = Plugin_052_read_RAM_EEPROM(P052_CMD_READ_RAM, P052_RAM_ADDR_CO2, 2);
+  short temperature = Plugin_052_read_RAM_EEPROM(P052_CMD_READ_RAM, P052_RAM_ADDR_SPACE_TEMPERATURE, 2);
+  short humidity = Plugin_052_read_RAM_EEPROM(P052_CMD_READ_RAM, P052_RAM_ADDR_RELATIVE_HUMIDITY, 2);
+  String log = F("P052: ");
+  log += F("CO2: ");
+  log += co2;
+  log += F(" ppm Temp: ");
+  log += (float)temperature/100.0;
+  log += F(" C Hum: ");
+  log += (float)humidity/100.0;
+  log += F("%");
+  if (!valid_measurement) log += F(" (old)");
+  addLog(LOG_LEVEL_INFO, log);
+  return co2;
+}
+
+bool Plugin_052_measurement_active() {
+  unsigned int meter_status = Plugin_052_read_RAM_EEPROM(P052_CMD_READ_RAM, P052_RAM_ADDR_METER_STATUS, 1);
+  // Meter Status bit 5 indicates single cycle measurement active
+  return getBitOfInt(meter_status, 5);
+}
+
+// Perform a single measurement.
+// return value indicates a successful measurement update.
+bool Plugin_052_prepare_single_measurement_from_RAM()
+{
+  Plugin_052_check_error_status();
+  if (millis() < (_plugin_052_last_measurement + P052_MEASUREMENT_INTERVAL)) {
+    // Last measurement taken is still valid.
+    return true;
+  }
+  int retry_count = 2;
+  addLog(LOG_LEVEL_INFO, F("P052: Start perform measurement"));
+  while (!Plugin_052_measurement_active() && retry_count > 0) {
+    // Trigger new measurement and make sure it is set active.
+    --retry_count;
+    addLog(LOG_LEVEL_INFO, F("P052: Write to SCR: perform measurement"));
+    Plugin_052_writeSpecialCommandRegister(P052_SCR_SINGLE_MEASUREMENT);
+    delay(50);
+  }
+  if (!Plugin_052_measurement_active()) {
+    // Could not start measurement.
+    addLog(LOG_LEVEL_INFO, F("P052: Could not start single measurement"));
+    return false;
+  }
+  retry_count = 30;
+  while (retry_count > 0) {
+    --retry_count;
+    if (!Plugin_052_measurement_active()) {
+      _plugin_052_last_measurement = millis();
+      String log = F("P052: Measurement complete after ");
+      log += (30 - retry_count);
+      addLog(LOG_LEVEL_INFO, log);
+      return true;
+    }
+    delay(1000);
+  }
+  return false;
 }
 
 float Plugin_052_readTemperature(void)
