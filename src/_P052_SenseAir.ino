@@ -256,19 +256,25 @@ String Plugin_052_getDevice_description(byte slaveAddress) {
   unsigned int object_value_int;
   String description;
   String obj_text;
-  for (byte object_id = 0; object_id < 7; ++object_id) {
+  for (byte object_id = 0; object_id < 0x84; ++object_id) {
+    if (object_id == 6) {
+      object_id = 0x82; // Skip to the serialnr/sensor type
+    }
     if (0 == Plugin_052_modbus_get_MEI(slaveAddress, object_id, obj_text, object_value_int, next_object_id, more_follows)) {
-//      description += Plugin_052_MEI_objectid_to_name(object_id);
-//      description += F(": ");
+      String label;
+      switch (object_id) {
+        case 0x82: label = F("S/N"); break;
+        case 0x83: label = F("Type"); break;
+        default: break;
+      }
+      if (label.length() > 0) {
+        //description += Plugin_052_MEI_objectid_to_name(object_id);
+        description += label;
+        description += F(": ");
+      }
       description += obj_text;
       description += F(" - ");
     }
-  }
-  String serialnr;
-  if (0 == Plugin_052_modbus_get_MEI(slaveAddress, 0x82, serialnr, object_value_int, next_object_id, more_follows)) {
-    description += F("S/N: ");
-    description += serialnr;
-    description += F(" - ");
   }
   return description;
 }
