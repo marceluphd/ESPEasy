@@ -760,12 +760,15 @@ bool Plugin_052_prepare_single_measurement_from_RAM()
   retry_count = 30;
   while (retry_count > 0) {
     --retry_count;
-    if (!Plugin_052_measurement_active()) {
-      _plugin_052_last_measurement = millis();
-      String log = F("P052: Measurement complete after ");
-      log += (30 - retry_count);
-      addLog(LOG_LEVEL_INFO, log);
-      return true;
+    if (retry_count < 14) {
+      // Just wait for 16 seconds.
+      if (!Plugin_052_measurement_active()) {
+        _plugin_052_last_measurement = millis();
+        String log = F("P052: Measurement complete after ");
+        log += (30 - retry_count);
+        addLog(LOG_LEVEL_INFO, log);
+        return true;
+      }
     }
     delay(1000);
   }
