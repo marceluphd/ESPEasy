@@ -1,1 +1,9 @@
 Version.h
+
+\.pioenvs/
+
+lib/readme\.txt
+
+\.gcc-flags\.json
+
+\.clang_complete
