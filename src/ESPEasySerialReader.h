@@ -11,8 +11,10 @@ public:
     m_buffer = (uint8_t*)malloc(m_buffSize);
   }
 
-  virtual ~SerialReaderStrategy() {}
-
+  virtual ~SerialReaderStrategy() {
+    if (m_buffer)
+       free(m_buffer);
+  }
 
   // Store a byte into the buffer.
   // @return Whether it was possible to insert a byte in the buffer.
