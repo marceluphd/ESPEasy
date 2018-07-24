@@ -193,9 +193,9 @@ public:
 
   size_t write(uint8_t b) {
     switch (_selectedPort) {
-      case SoftwareSerial:  return swSerial->write();
-      case HardwareSerial0: return Serial.write();
-      case HardwareSerial1: return Serial1.write();
+      case SoftwareSerial:  return swSerial->write(b);
+      case HardwareSerial0: return Serial.write(b);
+      case HardwareSerial1: return Serial1.write(b);
       default:
         return 0;
     }
