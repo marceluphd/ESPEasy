@@ -215,7 +215,7 @@ public:
     }
     if (value < 0 || value > 255) return;
     _strategy.store(static_cast<uint8_t>(value));
-    if (_strategy.packetAvailable()) {
+    if (!_strategy.packetAvailable()) {
       _strategy.checkForValidPacket();
     }
   }
