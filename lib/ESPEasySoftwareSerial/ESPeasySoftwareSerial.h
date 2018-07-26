@@ -38,9 +38,7 @@ public:
    ESPeasySoftwareSerial(uint8_t receivePin, uint8_t transmitPin, bool inverse_logic = false, uint16_t buffSize = 64);
    virtual ~ESPeasySoftwareSerial();
 
-   bool isValidConstructed() {
-     return pinToIndex(m_rxPin) != NR_CONCURRENT_SOFT_SERIALS;
-   }
+   bool isValidConstructed();
 
    void begin(long speed);
    void setTransmitEnablePin(uint8_t transmitEnablePin);

@@ -21,7 +21,7 @@ public:
   bool store(uint8_t data) {
     int next = (m_inPos+1) % m_buffSize;
     if (next != m_outPos) {
-      m_buffer[m_inPos] = rec;
+      m_buffer[m_inPos] = data;
       m_inPos = next;
     } else {
       m_overflow = true;
@@ -47,7 +47,7 @@ public:
   }
 
   // Get the number of bytes available in the buffer.
-  uint16_t available() {
+  uint16_t available() const {
     int avail = m_inPos - m_outPos;
     if (avail < 0) avail += m_buffSize;
     return static_cast<uint16_t>(avail);
@@ -67,7 +67,9 @@ public:
   // - Find start of packet
   // - check packet validity (e.g. CRC)
   // - call markValidPacket
-  virtual void checkForValidPacket() = 0;
+  virtual void checkForValidPacket() {
+    
+  };
 
   // Read byte for byte the packet data and increase the read pointer
   // to make room for the next packet. (so data can only read once)
@@ -105,8 +107,8 @@ protected:
   // @param peek_offset Offset between current reading position and the start of the packet.
   // @param packet_length  The length of the found packet.
   void markValidPacket(uint16_t peek_offset, uint16_t packet_length) {
-    m_packet_start = packet_start;
-    m_packet_end = (packet_start + packet_length) % m_buffSize;
+    m_packet_start = (m_outPos + peek_offset) % m_buffSize;
+    m_packet_end = (m_packet_start + packet_length) % m_buffSize;
     // Set out pointer to start of packet to make room for next.
     m_outPos = m_packet_start;
   }
@@ -124,7 +126,7 @@ protected:
   uint8_t *m_buffer;
   bool m_overflow;
   std::vector<byte> _buffer;
-}
+};
 
 class ESPEasySerialReader {
 public:
@@ -242,7 +244,7 @@ private:
   SerialReaderStrategy _strategy;
   ESPeasySoftwareSerial *swSerial;
   SelectedPort _selectedPort;
-}
+};
 
 
 

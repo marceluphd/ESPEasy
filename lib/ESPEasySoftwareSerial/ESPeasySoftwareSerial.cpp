@@ -110,6 +110,10 @@ ESPeasySoftwareSerial::~ESPeasySoftwareSerial() {
       free(m_buffer);
 }
 
+bool ESPeasySoftwareSerial::isValidConstructed() {
+  return pinToIndex(m_rxPin) != NR_CONCURRENT_SOFT_SERIALS;
+}
+
 bool ESPeasySoftwareSerial::isValidGPIOpin(uint8_t pin) {
   if (pin >= 0 && pin <= 5) {
     return true;

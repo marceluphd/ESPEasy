@@ -10,7 +10,7 @@
 // that counts particles and transmits measurement data over the serial connection.
 
 
-#include <ESPeasySoftwareSerial.h>
+#include <ESPEasySerialReader.h>
 
 #define PLUGIN_053
 #define PLUGIN_ID_053 53
@@ -22,9 +22,23 @@
 #define PMSx003_SIG2 0X4d
 #define PMSx003_SIZE 32
 
-ESPeasySoftwareSerial *swSerial = NULL;
 boolean Plugin_053_init = false;
 boolean values_received = false;
+
+struct P053_SerialReaderStrategy : public SerialReaderStrategy {
+  // Use 64 bytes as buffer.
+  P053_SerialReaderStrategy() : SerialReaderStrategy(64) {
+  }
+  virtual void checkForValidPacket() {
+
+  }
+
+};
+P053_SerialReaderStrategy P053_strategy;
+
+
+
+ESPEasySerialReader P053_SerialReader(P053_strategy);
 
 // Read 2 bytes from serial and make an uint16 of it. Additionally calculate
 // checksum for PMSx003. Assumption is that there is data available, otherwise
@@ -32,19 +46,8 @@ boolean values_received = false;
 void SerialRead16(uint16_t* value, uint16_t* checksum)
 {
   uint8_t data_high, data_low;
-
-  // If swSerial is initialized, we are using soft serial
-  if (swSerial != NULL)
-  {
-    data_high = swSerial->read();
-    data_low = swSerial->read();
-  }
-  else
-  {
-    data_high = Serial.read();
-    data_low = Serial.read();
-  }
-
+  P053_SerialReader.readPacketByte(data_high);
+  P053_SerialReader.readPacketByte(data_low);
   *value = data_low;
   *value |= (data_high << 8);
 
@@ -67,36 +70,12 @@ void SerialRead16(uint16_t* value, uint16_t* checksum)
 }
 
 void SerialFlush() {
-  if (swSerial != NULL) {
-    swSerial->flush();
-  } else {
-    Serial.flush();
-  }
+  P053_SerialReader.flush();
 }
 
 boolean PacketAvailable(void)
 {
-  if (swSerial != NULL) // Software serial
-  {
-    // When there is enough data in the buffer, search through the buffer to
-    // find header (buffer may be out of sync)
-    if (!swSerial->available()) return false;
-    while ((swSerial->peek() != PMSx003_SIG1) && swSerial->available()) {
-      swSerial->read(); // Read until the buffer starts with the first byte of a message, or buffer empty.
-    }
-    if (swSerial->available() < PMSx003_SIZE) return false; // Not enough yet for a complete packet
-  }
-  else // Hardware serial
-  {
-    // When there is enough data in the buffer, search through the buffer to
-    // find header (buffer may be out of sync)
-    if (!Serial.available()) return false;
-    while ((Serial.peek() != PMSx003_SIG1) && Serial.available()) {
-      Serial.read(); // Read until the buffer starts with the first byte of a message, or buffer empty.
-    }
-    if (Serial.available() < PMSx003_SIZE) return false; // Not enough yet for a complete packet
-  }
-  return true;
+  return P053_SerialReader.packetAvailable();
 }
 
 boolean Plugin_053_process_data(struct EventStruct *event) {
@@ -230,27 +209,17 @@ boolean Plugin_053(byte function, struct EventStruct *event, String& string)
         log += resetPin;
         addLog(LOG_LEVEL_DEBUG, log);
 
-        if (swSerial != NULL) {
-          // Regardless the set pins, the software serial must be deleted.
-          delete swSerial;
-          swSerial = NULL;
-        }
-
         // Hardware serial is RX on 3 and TX on 1
         if (rxPin == 3 && txPin == 1)
         {
           log = F("PMSx003 : using hardware serial");
           addLog(LOG_LEVEL_INFO, log);
-          Serial.begin(9600);
-          Serial.flush();
+          P053_SerialReader.configureHardwareSerial(ESPEasySerialReader::HardwareSerial0, 9600);
         }
         else
         {
           log = F("PMSx003: using software serial");
           addLog(LOG_LEVEL_INFO, log);
-          swSerial = new ESPeasySoftwareSerial(rxPin, txPin, false, 96); // 96 Bytes buffer, enough for up to 3 packets.
-          swSerial->begin(9600);
-          swSerial->flush();
         }
 
         if (resetPin >= 0) // Reset if pin is configured
@@ -272,12 +241,7 @@ boolean Plugin_053(byte function, struct EventStruct *event, String& string)
 
     case PLUGIN_EXIT:
       {
-          if (swSerial)
-          {
-            delete swSerial;
-            swSerial=NULL;
-          }
-          break;
+        break;
       }
 
     // The update rate from the module is 200ms .. multiple seconds. Practise
