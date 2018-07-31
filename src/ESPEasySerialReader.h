@@ -68,7 +68,7 @@ public:
   // - check packet validity (e.g. CRC)
   // - call markValidPacket
   virtual void checkForValidPacket() {
-    
+
   };
 
   // Read byte for byte the packet data and increase the read pointer
@@ -205,20 +205,36 @@ public:
     }
   }
 
+  size_t write(uint8_t* b, size_t len) {
+    switch (_selectedPort) {
+      case SoftwareSerial:  return swSerial->write(b, len);
+      case HardwareSerial0: return Serial.write(b, len);
+      case HardwareSerial1: return Serial1.write(b, len);
+      default:
+        return 0;
+    }
+  }
+
   // The main loop for the reader, to get data into the strategy buffer.
   void process() {
     if (_strategy.full())
       return;
-    int value = -1;
-    switch (_selectedPort) {
-      case SoftwareSerial:  value = swSerial->read(); break;
-      case HardwareSerial0: value = Serial.read();    break;
-      case HardwareSerial1: value = Serial1.read();    break;
-      default:
-        return;
+    // At 9600 baud, you need to up-to 870 bytes/sec.
+    // This means that even at 50/sec interval more than one byte can be available.
+    // This data is taken from the serial buffer, so it is non blocking.
+    int value = 0;
+    while (!_strategy.full() && value != -1) {
+      switch (_selectedPort) {
+        case SoftwareSerial:  value = swSerial->read(); break;
+        case HardwareSerial0: value = Serial.read();    break;
+        case HardwareSerial1: value = Serial1.read();    break;
+        default:
+          value = -1;
+      }
+      if (value >= 0 && value <= 255) {
+        _strategy.store(static_cast<uint8_t>(value));
+      }
     }
-    if (value < 0 || value > 255) return;
-    _strategy.store(static_cast<uint8_t>(value));
     if (!_strategy.packetAvailable()) {
       _strategy.checkForValidPacket();
     }
