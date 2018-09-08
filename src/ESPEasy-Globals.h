@@ -291,6 +291,8 @@
 #define LOG_LEVEL_DEBUG_DEV                 9 // use for testing/debugging only, not for regular use
 #define LOG_LEVEL_NRELEMENTS                5 // Update this and getLogLevelDisplayString() when new log levels are added
 
+#define MAX_LOG_LIFETIME                 2000
+
 #define CMD_REBOOT                         89
 #define CMD_WIFI_DISCONNECT               135
 
@@ -1135,110 +1137,120 @@ struct EventStruct
   #endif
 #endif
 
+struct LogElementStruct {
+  LogElementStruct() : timeStamp(0), log_level(0) {}
+
+  LogElementStruct(const byte loglevel, const char *line) {
+    add(loglevel, line);
+  }
+
+  void add(const byte loglevel, const char *line) {
+    timeStamp = millis();
+    log_level = loglevel;
+    Message = line;
+  }
+
+  String formatLine(const String& lineEnd) const {
+    String output;
+    output.reserve(Message.length() + 12);
+    output += timeStamp;
+    output += " : ";
+    output += Message;
+    output += lineEnd;
+    return output;
+  }
+
+  String logjson_formatLine() const {
+    String output;
+    output.reserve(Message.length() + 64);
+    output = "{";
+    output += to_json_object_value("timestamp", String(timeStamp));
+    output += ",\n";
+    output += to_json_object_value("text",  Message);
+    output += ",\n";
+    output += to_json_object_value("level", String(log_level));
+    output += "}";
+    return output;
+  }
+
+  bool match(const byte loglevel, unsigned long lastTimestamp) const {
+    if (log_level > loglevel) return false;
+    // Positive when lastTimestamp before timeStamp.
+    return timeDiff(lastTimestamp, timeStamp) > 0;
+  }
+
+  bool must_remove() const {
+    return timePassedSince(timeStamp) > MAX_LOG_LIFETIME;
+  }
+
+  unsigned long getTimeStamp() const {
+    return timeStamp;
+  }
+
+private:
+  unsigned long timeStamp;
+  byte log_level;
+  String Message;
+};
+
 struct LogStruct {
-    LogStruct() : write_idx(0), read_idx(0) {
-      for (int i = 0; i < LOG_STRUCT_MESSAGE_LINES; ++i) {
-        Message[i].reserve(LOG_STRUCT_MESSAGE_SIZE);
-        timeStamp[i] = 0;
-        log_level[i] = 0;
-      }
-    }
+    LogStruct() {}
 
     void add(const byte loglevel, const char *line) {
-      write_idx = (write_idx + 1) % LOG_STRUCT_MESSAGE_LINES;
-      if (write_idx == read_idx) {
-        // Buffer full, move read_idx to overwrite oldest entry.
-        read_idx = (read_idx + 1) % LOG_STRUCT_MESSAGE_LINES;
-      }
-      timeStamp[write_idx] = millis();
-      log_level[write_idx] = loglevel;
-      unsigned linelength = strlen(line);
-      if (linelength > LOG_STRUCT_MESSAGE_SIZE-1)
-        linelength = LOG_STRUCT_MESSAGE_SIZE-1;
-      Message[write_idx] = "";
-      for (unsigned i = 0; i < linelength; ++i) {
-        Message[write_idx] += *(line + i);
-      }
+      remove_old();
+      const size_t line_length = strlen(line);
+      if (line_length < 1000 && ESP.getFreeHeap() > 5000)
+        messages.emplace_back(loglevel, line);
     }
 
     // Read the next item and append it to the given string.
     // Returns whether new lines are available.
-    bool get(String& output, const String& lineEnd) {
-      if (!isEmpty()) {
-        read_idx = (read_idx + 1) % LOG_STRUCT_MESSAGE_LINES;
-        output += formatLine(read_idx, lineEnd);
-      }
-      return !isEmpty();
+    String get(const byte loglevel, unsigned long& lastTimestamp, bool& logLinesAvailable, const String& lineEnd) {
+      std::list<LogElementStruct>::const_iterator it =
+        find(loglevel, lastTimestamp, logLinesAvailable);
+      if (it == messages.end()) return "";
+      return it->formatLine(lineEnd);
     }
 
-    String get_logjson_formatted(bool& logLinesAvailable, unsigned long& timestamp) {
-      logLinesAvailable = false;
-      if (isEmpty()) {
-        return "";
-      }
-      read_idx = (read_idx + 1) % LOG_STRUCT_MESSAGE_LINES;
-      timestamp = timeStamp[read_idx];
-      String output = logjson_formatLine(read_idx);
-      if (isEmpty()) return output;
-      output += ",\n";
-      logLinesAvailable = true;
+    String get_logjson_formatted(const byte loglevel, unsigned long& lastTimestamp, bool& logLinesAvailable) {
+      std::list<LogElementStruct>::const_iterator it =
+        find(loglevel, lastTimestamp, logLinesAvailable);
+      if (it == messages.end()) return "";
+      String output = it->logjson_formatLine();
+      if (logLinesAvailable)
+        output += ",\n";
       return output;
     }
 
-    bool get(String& output, const String& lineEnd, int line) {
-      int tmpread((write_idx + 1+line) % LOG_STRUCT_MESSAGE_LINES);
-      if (timeStamp[tmpread] != 0) {
-        output += formatLine(tmpread, lineEnd);
-      }
-      return !isEmpty();
-    }
-
-    bool getAll(String& output, const String& lineEnd) {
-      int tmpread((write_idx + 1) % LOG_STRUCT_MESSAGE_LINES);
-      bool someAdded = false;
-      while (tmpread != write_idx) {
-        if (timeStamp[tmpread] != 0) {
-          output += formatLine(tmpread, lineEnd);
-          someAdded = true;
-        }
-        tmpread = (tmpread + 1)% LOG_STRUCT_MESSAGE_LINES;
-      }
-      return someAdded;
-    }
-
-    bool isEmpty() {
-      return (write_idx == read_idx);
+    bool logsAvailable(byte loglevel, unsigned long lastTimestamp) const {
+      bool tmpLinesAvail = false;
+      return find(loglevel, lastTimestamp, tmpLinesAvail) != messages.end();
     }
 
   private:
-    String formatLine(int index, const String& lineEnd) {
-      String output;
-      output += timeStamp[index];
-      output += " : ";
-      output += Message[index];
-      output += lineEnd;
-      return output;
+
+    std::list<LogElementStruct>::const_iterator find(const byte loglevel, unsigned long& lastTimestamp, bool& logLinesAvailable) const {
+      logLinesAvailable = false;
+      for (std::list<LogElementStruct>::const_iterator it = messages.begin();
+           it != messages.end(); ++it) {
+        if (it->match(loglevel, lastTimestamp)) {
+          lastTimestamp = it->getTimeStamp();
+          logLinesAvailable = logsAvailable(loglevel, lastTimestamp);
+          return it;
+        }
+      }
+      lastTimestamp = millis();
+      return messages.end();
     }
 
-    String logjson_formatLine(int index) {
-      String output;
-      output.reserve(LOG_STRUCT_MESSAGE_SIZE + 64);
-      output = "{";
-      output += to_json_object_value("timestamp", String(timeStamp[index]));
-      output += ",\n";
-      output += to_json_object_value("text",  Message[index]);
-      output += ",\n";
-      output += to_json_object_value("level", String(log_level[index]));
-      output += "}";
-      return output;
+    void remove_old() {
+      while(messages.size() > 0) {
+        if (!messages.front().must_remove()) return;
+        messages.pop_front();
+      }
     }
 
-
-    int write_idx;
-    int read_idx;
-    unsigned long timeStamp[LOG_STRUCT_MESSAGE_LINES];
-    byte log_level[LOG_STRUCT_MESSAGE_LINES];
-    String Message[LOG_STRUCT_MESSAGE_LINES];
+    std::list<LogElementStruct> messages;
 
 } Logging;
 

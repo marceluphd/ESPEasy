@@ -1087,14 +1087,6 @@ void addToLog(byte logLevel, const __FlashStringHelper* flashString)
     addToLog(logLevel, s.c_str());
 }
 
-bool SerialAvailableForWrite() {
-  if (!Settings.UseSerial) return false;
-  #if defined(ESP8266)
-    if (!Serial.availableForWrite()) return false; // UART FIFO overflow or TX disabled.
-  #endif
-  return true;
-}
-
 void disableSerialLog() {
   log_to_serial_disabled = true;
   setLogLevelFor(LOG_TO_SERIAL, 0);
@@ -1131,7 +1123,7 @@ boolean loglevelActiveFor(byte destination, byte logLevel) {
   byte logLevelSettings = 0;
   switch (destination) {
     case LOG_TO_SERIAL: {
-      if (!SerialAvailableForWrite()) return false;
+      if (!Settings.UseSerial) return false;
       logLevelSettings = Settings.SerialLogLevel;
       if (wifiStatus != ESPEASY_WIFI_SERVICES_INITIALIZED)
         logLevelSettings = 2;
@@ -1162,28 +1154,11 @@ boolean loglevelActive(byte logLevel, byte logLevelSettings) {
 
 void addToLog(byte logLevel, const char *line)
 {
-  const size_t line_length = strlen(line);
-  if (loglevelActiveFor(LOG_TO_SERIAL, logLevel)) {
-    int roomLeft = ESP.getFreeHeap() - 5000;
-    if (roomLeft > 0) {
-      String timestamp_log(millis());
-      timestamp_log += F(" : ");
-      for (size_t i = 0; i < timestamp_log.length(); ++i) {
-        serialLogBuffer.push_back(timestamp_log[i]);
-      }
-      size_t pos = 0;
-      while (pos < line_length && pos < static_cast<size_t>(roomLeft)) {
-        serialLogBuffer.push_back(line[pos]);
-        ++pos;
-      }
-      serialLogBuffer.push_back('\r');
-      serialLogBuffer.push_back('\n');
-    }
-  }
   if (loglevelActiveFor(LOG_TO_SYSLOG, logLevel)) {
     syslog(logLevel, line);
   }
-  if (loglevelActiveFor(LOG_TO_WEBLOG, logLevel)) {
+  if (loglevelActiveFor(LOG_TO_SERIAL, logLevel) ||
+      loglevelActiveFor(LOG_TO_WEBLOG, logLevel)) {
     Logging.add(logLevel, line);
   }
 
@@ -1198,8 +1173,10 @@ void addToLog(byte logLevel, const char *line)
 }
 
 void process_serialLogBuffer() {
-  if (serialLogBuffer.size() == 0) return;
-  if (timePassedSince(last_serial_log_emptied) > 10000) {
+  static unsigned long lastSerialLogRead = 0;
+  bool logLinesAvailable = Logging.logsAvailable(Settings.SerialLogLevel, lastSerialLogRead);
+  if (!logLinesAvailable && serialLogBuffer.size() == 0) return;
+  if (timePassedSince(last_serial_log_emptied) > 2000) {
     last_serial_log_emptied = millis();
     serialLogBuffer.clear();
     return;
@@ -1214,6 +1191,12 @@ void process_serialLogBuffer() {
   for (size_t i = 0; i < bytes_to_write; ++i) {
     Serial.write(serialLogBuffer.front());
     serialLogBuffer.pop_front();
+  }
+  if (serialLogBuffer.size() == 0) return;
+  String newLogLine = Logging.get(Settings.SerialLogLevel, lastSerialLogRead, logLinesAvailable, "\r\n");
+  const size_t length = newLogLine.length();
+  for (size_t i = 0; i < length; ++i) {
+    serialLogBuffer.push_back(newLogLine[i]);
   }
 }
 

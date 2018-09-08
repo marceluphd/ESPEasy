@@ -3139,9 +3139,10 @@ void handle_log_JSON() {
   bool logLinesAvailable = true;
   int nrEntries = 0;
   unsigned long firstTimeStamp = 0;
-  unsigned long lastTimeStamp = 0;
+  // TODO TD-er: lastTimeStamp must be given by the web log reader.
+  static unsigned long lastTimeStamp = 0;
   while (logLinesAvailable) {
-    String reply = Logging.get_logjson_formatted(logLinesAvailable, lastTimeStamp);
+    String reply = Logging.get_logjson_formatted(Settings.WebLogLevel, lastTimeStamp, logLinesAvailable);
     if (reply.length() > 0) {
       TXBuffer += reply;
       if (nrEntries == 0) {
@@ -3155,6 +3156,8 @@ void handle_log_JSON() {
   long logTimeSpan = timeDiff(firstTimeStamp, lastTimeStamp);
   long refreshSuggestion = 1000;
   long newOptimum = 1000;
+/*
+  // Disable lowering TTL with new log buffer.
   if (nrEntries > 2 && logTimeSpan > 1) {
     // May need to lower the TTL for refresh when time needed
     // to fill half the log is lower than current TTL
@@ -3166,6 +3169,7 @@ void handle_log_JSON() {
     // Reload times no lower than 100 msec.
     refreshSuggestion = 100;
   }
+*/
   stream_next_json_object_value(F("TTL"), String(refreshSuggestion));
   stream_next_json_object_value(F("timeHalfBuffer"), String(newOptimum));
   stream_next_json_object_value(F("nrEntries"), String(nrEntries));
@@ -5236,16 +5240,6 @@ void handle_sysinfo() {
   html_TR_TD(); TXBuffer += F("Allowed IP Range<TD>");
   TXBuffer += describeAllowedIPrange();
 
-  html_TR_TD(); TXBuffer += F("Serial Port available:<TD>");
-  TXBuffer += String(SerialAvailableForWrite());
-  TXBuffer += F(" (");
-  #if defined(ESP8266)
-    TXBuffer += Serial.availableForWrite();
-  #endif
-  TXBuffer += F(" , ");
-  TXBuffer += Serial.available();
-  TXBuffer += F(")");
-
   html_TR_TD(); TXBuffer += F("STA MAC<TD>");
 
   uint8_t mac[] = {0, 0, 0, 0, 0, 0};
@@ -5269,7 +5263,7 @@ void handle_sysinfo() {
   TXBuffer += WiFi.channel();
 
   html_TR_TD(); TXBuffer += F("Connected<TD>");
-  TXBuffer += format_msec_duration(timeDiff(lastConnectMoment, millis()));
+  TXBuffer += format_msec_duration(timePassedSince(lastConnectMoment));
 
   html_TR_TD(); TXBuffer += F("Last Disconnect Reason<TD>");
   TXBuffer += getLastDisconnectReason();
