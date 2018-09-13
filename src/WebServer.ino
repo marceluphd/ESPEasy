@@ -3763,6 +3763,8 @@ void handle_json()
           stream_next_json_object_value(F("Load LC"), String(getLoopCountPerSec()));
       }
 
+//      stream_next_json_object_value(F("Heap fragmentation"), String(ESP.getHeapFragmentation()));
+//      stream_next_json_object_value(F("Max free block size"), String(ESP.getMaxFreeBlockSize()));
       stream_last_json_object_value(F("Free RAM"), String(ESP.getFreeHeap()));
       TXBuffer += F(",\n");
     }
