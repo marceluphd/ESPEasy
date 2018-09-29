@@ -748,6 +748,10 @@ To create/register a plugin, you have to :
 
 #endif
 
+#ifdef M5STACK_ESP
+  #undef USES_P036   // FrameOLED
+#endif
+
 
 /******************************************************************************\
  * Libraries dependencies *****************************************************
