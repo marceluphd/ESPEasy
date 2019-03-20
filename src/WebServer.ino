@@ -3870,9 +3870,7 @@ void handle_tools() {
 
 #ifdef WEBSERVER_NEW_UI
   #if defined(ESP8266)
-    fs::FSInfo fs_info;
-    SPIFFS.info(fs_info);
-    if ((fs_info.totalBytes - fs_info.usedBytes) / 1024 > 50) {
+    if ((SpiffsTotalBytes() - SpiffsUsedBytes()) / 1024 > 50) {
       TXBuffer += F("<TR><TD>");
       TXBuffer += F("<script>function downloadUI() { fetch('https://raw.githubusercontent.com/letscontrolit/espeasy_ui/master/build/index.htm.gz').then(r=>r.arrayBuffer()).then(r => {var f=new FormData();f.append('file', new File([new Blob([new Uint8Array(r)])], 'index.htm.gz'));f.append('edit', 1);fetch('/upload',{method:'POST',body:f}).then(() => {window.location.href='/';});}); }</script>");
       TXBuffer += F("<a class=\"button link wide\" onclick=\"downloadUI()\">Download new UI</a>");
@@ -6741,10 +6739,8 @@ void handle_sysinfo_json() {
 
   {
   #if defined(ESP8266)
-    fs::FSInfo fs_info;
-    SPIFFS.info(fs_info);
-    json_number(F("spiffs_size"),  String(fs_info.totalBytes / 1024));
-    json_number(F("spiffs_free"),  String((fs_info.totalBytes - fs_info.usedBytes) / 1024));
+    json_number(F("spiffs_size"),  String(SpiffsTotalBytes() / 1024));
+    json_number(F("spiffs_free"),  String((SpiffsTotalBytes() - SpiffsUsedBytes()) / 1024));
   #endif
   }
   json_close();
@@ -7059,23 +7055,23 @@ void handle_sysinfo() {
 
   addRowLabel(getLabel(LabelType::SPIFFS_SIZE));
   {
-  #if defined(ESP8266)
-    fs::FSInfo fs_info;
-    SPIFFS.info(fs_info);
-    TXBuffer += fs_info.totalBytes / 1024;
+    TXBuffer += SpiffsTotalBytes() / 1024;
     TXBuffer += F(" kB (");
-    TXBuffer += (fs_info.totalBytes - fs_info.usedBytes) / 1024;
+    TXBuffer += (SpiffsTotalBytes() - SpiffsUsedBytes()) / 1024;
     TXBuffer += F(" kB free)");
 
     addRowLabel(F("Page size"));
-    TXBuffer += String(fs_info.pageSize);
+    TXBuffer += String(SpiffsPagesize());
 
     addRowLabel(F("Block size"));
-    TXBuffer += String(fs_info.blockSize);
+    TXBuffer += String(SpiffsBlocksize());
 
     addRowLabel(F("Number of blocks"));
-    TXBuffer += String(fs_info.totalBytes / fs_info.blockSize);
+    TXBuffer += String(SpiffsTotalBytes() / SpiffsBlocksize());
 
+  #if defined(ESP8266)
+    fs::FSInfo fs_info;
+    SPIFFS.info(fs_info);
     addRowLabel(F("Maximum open files"));
     TXBuffer += String(fs_info.maxOpenFiles);
 
