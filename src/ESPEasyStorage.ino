@@ -2,6 +2,9 @@
 #include "src/Globals/CRCValues.h"
 #include "src/Globals/ResetFactoryDefaultPref.h"
 #include "src/Globals/Plugins.h"
+#include "src/Globals/MeshSettings.h"
+#include "src/Globals/SecuritySettings.h"
+
 
 /********************************************************************************************\
    SPIFFS error handling
@@ -281,6 +284,14 @@ String SaveSettings(void)
       wifiConnectAttemptNeeded = true;
     }
   }
+
+  #ifdef USES_WIFI_MESH
+    if (!fileExists((char *)FILE_MESH)) {
+      InitFile((char *)FILE_MESH, 4096);
+    }
+    err += SaveToFile((char *)FILE_MESH, 0, (byte *)&MeshSettings, sizeof(MeshSettingsStruct));
+  #endif
+
   afterloadSettings();
   return err;
 }
@@ -355,6 +366,11 @@ String LoadSettings()
   else {
     addLog(LOG_LEVEL_ERROR, F("CRC  : SecuritySettings CRC   ...FAIL"));
   }
+
+#ifdef USES_WIFI_MESH
+  err += LoadFromFile((char *)FILE_MESH, 0, (byte *)&MeshSettings, sizeof(MeshSettingsStruct));
+#endif
+
 
   //  setupStaticIPconfig();
   // FIXME TD-er: Must check if static/dynamic IP was changed and trigger a reconnect? Or is a reboot better when changing those settings?
@@ -784,6 +800,7 @@ String SaveToFile(const char *fname, int index, const byte *memAddress, int data
     addLog(LOG_LEVEL_ERROR, log);
     return log;
   }
+
   START_TIMER;
   checkRAM(F("SaveToFile"));
   FLASH_GUARD();
