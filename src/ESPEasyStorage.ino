@@ -312,6 +312,12 @@ void afterloadSettings() {
     eventQueue.clear();
   }
   set_mDNS(); // To update changes in hostname.
+
+  #ifdef USES_WIFI_MESH
+  // FIXME TD-er: Must detect whether settings have been changed and if so, delete meshNode
+  bool force = false;
+  createWiFiMeshNode(force);
+  #endif
 }
 
 /********************************************************************************************\

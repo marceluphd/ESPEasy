@@ -371,6 +371,7 @@ void SendStatus(byte source, const String& status)
 }
 
 #ifdef USES_MQTT
+// FIXME TD-er: Call MQTTpublish on receiving end of mesh node. 
 bool MQTTpublish(int controller_idx, const char *topic, const char *payload, boolean retained)
 {
   {
@@ -396,6 +397,8 @@ void processMQTTdelayQueue() {
   MQTT_queue_element *element(MQTTDelayHandler.getNext());
 
   if (element == NULL) { return; }
+  
+  // FIXME TD-er: Here we must try to send data to the mesh instead of MQTTclient
 
   if (MQTTclient.publish(element->_topic.c_str(), element->_payload.c_str(), element->_retained)) {
     MQTTDelayHandler.markProcessed(true);
