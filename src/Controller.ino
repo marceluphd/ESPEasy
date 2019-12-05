@@ -1,5 +1,6 @@
 #include "src/Globals/Device.h"
 #include "src/Globals/Plugins.h"
+#include "src/Globals/MeshSettings.h"
 
 // ********************************************************************************
 
@@ -82,7 +83,8 @@ void sendData(struct EventStruct *event)
 
 bool validUserVar(struct EventStruct *event) {
   const deviceIndex_t DeviceIndex = getDeviceIndex_from_TaskIndex(event->TaskIndex);
-  if (!validDeviceIndex(DeviceIndex)) return false;
+
+  if (!validDeviceIndex(DeviceIndex)) { return false; }
 
   switch (Device[DeviceIndex].VType) {
     case SENSOR_TYPE_LONG:    return true;
@@ -101,6 +103,7 @@ bool validUserVar(struct EventStruct *event) {
 }
 
 #ifdef USES_MQTT
+
 /*********************************************************************************************\
 * Handle incoming MQTT messages
 \*********************************************************************************************/
@@ -325,7 +328,8 @@ bool MQTTCheck(int controller_idx)
   // When no MQTT protocol is enabled, all is fine.
   return true;
 }
-#endif //USES_MQTT
+
+#endif // USES_MQTT
 
 /*********************************************************************************************\
 * Send status info to request source
@@ -363,7 +367,7 @@ void SendStatus(byte source, const String& status)
     case VALUE_SOURCE_MQTT:
       MQTTStatus(status);
       break;
-#endif //USES_MQTT
+#endif // USES_MQTT
     case VALUE_SOURCE_SERIAL:
       serialPrintln(status);
       break;
@@ -371,11 +375,13 @@ void SendStatus(byte source, const String& status)
 }
 
 #ifdef USES_MQTT
-// FIXME TD-er: Call MQTTpublish on receiving end of mesh node. 
+
+// FIXME TD-er: Call MQTTpublish on receiving end of mesh node.
 bool MQTTpublish(int controller_idx, const char *topic, const char *payload, boolean retained)
 {
   {
     MQTT_queue_element dummy_element(MQTT_queue_element(controller_idx, "", "", retained));
+
     if (MQTTDelayHandler.queueFull(dummy_element)) {
       // The queue is full, try to make some room first.
       addLog(LOG_LEVEL_DEBUG, F("MQTT : Extra processMQTTdelayQueue()"));
@@ -397,22 +403,48 @@ void processMQTTdelayQueue() {
   MQTT_queue_element *element(MQTTDelayHandler.getNext());
 
   if (element == NULL) { return; }
-  
-  // FIXME TD-er: Here we must try to send data to the mesh instead of MQTTclient
 
-  if (MQTTclient.publish(element->_topic.c_str(), element->_payload.c_str(), element->_retained)) {
+  bool sent = false;
+
+  # ifdef USES_WIFI_MESH
+
+  if (!MQTTclient.connected() && meshActive()) {
+    String message;
+    message.reserve(element->_topic.length() + element->_payload.length() + 32);
+    message += String(floodingMesh->metadataDelimiter());
+    message += F("publish ");
+    message += '`';
+    message += element->_topic;
+    message += '`';
+    message += ',';
+    message += '`';
+    message += element->_payload;
+    message += '`';
+    floodingMesh->broadcast(message);
+    floodingMeshDelay(20);
+    sent = true;
+
+    // FIXME TD-er: Must get some feedback on whether it was successful.
     MQTTDelayHandler.markProcessed(true);
-  } else {
-    MQTTDelayHandler.markProcessed(false);
-#ifndef BUILD_NO_DEBUG
+  }
+  # endif // ifdef USES_WIFI_MESH
 
-    if (loglevelActiveFor(LOG_LEVEL_DEBUG)) {
-      String log = F("MQTT : process MQTT queue not published, ");
-      log += MQTTDelayHandler.sendQueue.size();
-      log += F(" items left in queue");
-      addLog(LOG_LEVEL_DEBUG, log);
+
+  if (!sent) {
+    if (MQTTclient.publish(element->_topic.c_str(), element->_payload.c_str(), element->_retained)) {
+      MQTTDelayHandler.markProcessed(true);
+    } else {
+      MQTTDelayHandler.markProcessed(false);
+# ifndef BUILD_NO_DEBUG
+
+      if (loglevelActiveFor(LOG_LEVEL_DEBUG)) {
+        String log = F("MQTT : process MQTT queue not published, ");
+        log += MQTTDelayHandler.sendQueue.size();
+        log += F(" items left in queue");
+        addLog(LOG_LEVEL_DEBUG, log);
+      }
+# endif // ifndef BUILD_NO_DEBUG
     }
-#endif // ifndef BUILD_NO_DEBUG
   }
   setIntervalTimerOverride(TIMER_MQTT, 10); // Make sure the MQTT is being processed as soon as possible.
   scheduleNextMQTTdelayQueue();
@@ -435,13 +467,14 @@ void MQTTStatus(const String& status)
     MQTTpublish(enabledMqttController, pubname.c_str(), status.c_str(), Settings.MQTTRetainFlag);
   }
 }
-#endif //USES_MQTT
 
+#endif // USES_MQTT
 
 
 /*********************************************************************************************\
- * send all sensordata
+* send all sensordata
 \*********************************************************************************************/
+
 // void SensorSendAll()
 // {
 //   for (taskIndex_t x = 0; x < TASKS_MAX; x++)
@@ -452,54 +485,63 @@ void MQTTStatus(const String& status)
 
 
 /*********************************************************************************************\
- * send specific sensor task data
+* send specific sensor task data
 \*********************************************************************************************/
 void SensorSendTask(taskIndex_t TaskIndex)
 {
-  if (!validTaskIndex(TaskIndex)) return;
+  if (!validTaskIndex(TaskIndex)) { return; }
   checkRAM(F("SensorSendTask"));
+
   if (Settings.TaskDeviceEnabled[TaskIndex])
   {
     byte varIndex = TaskIndex * VARS_PER_TASK;
 
-    bool success = false;
+    bool success                    = false;
     const deviceIndex_t DeviceIndex = getDeviceIndex_from_TaskIndex(TaskIndex);
-    if (!validDeviceIndex(DeviceIndex)) return;
+
+    if (!validDeviceIndex(DeviceIndex)) { return; }
 
     LoadTaskSettings(TaskIndex);
 
     struct EventStruct TempEvent;
-    TempEvent.TaskIndex = TaskIndex;
+    TempEvent.TaskIndex    = TaskIndex;
     TempEvent.BaseVarIndex = varIndex;
+
     // TempEvent.idx = Settings.TaskDeviceID[TaskIndex]; todo check
     TempEvent.sensorType = Device[DeviceIndex].VType;
 
     float preValue[VARS_PER_TASK]; // store values before change, in case we need it in the formula
-    for (byte varNr = 0; varNr < VARS_PER_TASK; varNr++)
-      preValue[varNr] = UserVar[varIndex + varNr];
 
-    if(Settings.TaskDeviceDataFeed[TaskIndex] == 0)  // only read local connected sensorsfeeds
+    for (byte varNr = 0; varNr < VARS_PER_TASK; varNr++) {
+      preValue[varNr] = UserVar[varIndex + varNr];
+    }
+
+    if (Settings.TaskDeviceDataFeed[TaskIndex] == 0) // only read local connected sensorsfeeds
     {
       String dummy;
       success = PluginCall(PLUGIN_READ, &TempEvent, dummy);
     }
-    else
+    else {
       success = true;
+    }
 
     if (success)
     {
       START_TIMER;
+
       for (byte varNr = 0; varNr < VARS_PER_TASK; varNr++)
       {
         if (ExtraTaskSettings.TaskDeviceFormula[varNr][0] != 0)
         {
           String formula = ExtraTaskSettings.TaskDeviceFormula[varNr];
           formula.replace(F("%pvalue%"), String(preValue[varNr]));
-          formula.replace(F("%value%"), String(UserVar[varIndex + varNr]));
+          formula.replace(F("%value%"),  String(UserVar[varIndex + varNr]));
           float result = 0;
-          byte error = Calculate(formula.c_str(), &result);
-          if (error == 0)
+          byte  error  = Calculate(formula.c_str(), &result);
+
+          if (error == 0) {
             UserVar[varIndex + varNr] = result;
+          }
         }
       }
       STOP_TIMER(COMPUTE_FORMULA_STATS);

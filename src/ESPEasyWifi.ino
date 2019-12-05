@@ -5,6 +5,8 @@
 
 #include "src/Globals/ESPEasyWiFiEvent.h"
 
+
+
 // ********************************************************************************
 // WiFi state
 // ********************************************************************************
@@ -457,10 +459,17 @@ String getWifiModeString(WiFiMode_t wifimode)
 
 void setWifiMode(WiFiMode_t wifimode) {
   const WiFiMode_t cur_mode = WiFi.getMode();
+  bool new_mode_AP_enabled = WifiIsAP(wifimode);
 
   if (cur_mode == wifimode) {
     return;
   }
+  #ifdef USES_WIFI_MESH
+  if (meshActive() && !new_mode_AP_enabled) {
+    // WiFi mesh probably active, so disable mesh mode.
+    deleteWiFiMeshNode();
+  }
+  #endif
 
   if (wifimode != WIFI_OFF) {
     #ifdef ESP8266
@@ -489,7 +498,6 @@ void setWifiMode(WiFiMode_t wifimode) {
   } else {
     delay(30); // Must allow for some time to init.
   }
-  bool new_mode_AP_enabled = WifiIsAP(wifimode);
 
   if (WifiIsAP(cur_mode) && !new_mode_AP_enabled) {
     eventQueue.add(F("WiFi#APmodeDisabled"));
@@ -497,7 +505,16 @@ void setWifiMode(WiFiMode_t wifimode) {
 
   if (WifiIsAP(cur_mode) != new_mode_AP_enabled) {
     // Mode has changed
-    setAPinternal(new_mode_AP_enabled);
+    bool APmodeStarted = false;
+    #ifdef USES_WIFI_MESH
+    if (MeshSettings.enabled && new_mode_AP_enabled && !meshActive()) {
+      APmodeStarted = true;
+      createWiFiMeshNode(false);
+    }
+    #endif
+    if (!APmodeStarted) {
+      setAPinternal(new_mode_AP_enabled);
+    }
   }
   #ifdef FEATURE_MDNS
   MDNS.notifyAPChange();
