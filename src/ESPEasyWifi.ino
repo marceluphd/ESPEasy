@@ -4,6 +4,7 @@
 #define WIFI_ALLOW_AP_AFTERBOOT_PERIOD     5      // in minutes
 
 #include "src/Globals/ESPEasyWiFiEvent.h"
+#include "src/WiFi/ESPEasyWiFiMesh.h"
 
 
 

@@ -329,7 +329,7 @@ void processDisableAPmode() {
 
   if (WifiIsAP(WiFi.getMode())) {
     #ifdef USES_WIFI_MESH
-    if (floodingMesh != nullptr || tcpIpNode != nullptr) {
+    if (floodingMesh != nullptr) {
       // WiFi mesh probably active, so not disable AP mode
       return;
     }

@@ -1,6 +1,7 @@
 #include "src/Globals/Device.h"
 #include "src/Globals/Plugins.h"
 #include "src/Globals/MeshSettings.h"
+#include "src/WiFi/ESPEasyWiFiMesh.h"
 
 // ********************************************************************************
 
@@ -411,7 +412,6 @@ void processMQTTdelayQueue() {
   if (!MQTTclient.connected() && meshActive()) {
     String message;
     message.reserve(element->_topic.length() + element->_payload.length() + 32);
-    message += String(floodingMesh->metadataDelimiter());
     message += F("publish ");
     message += '`';
     message += element->_topic;
@@ -420,8 +420,7 @@ void processMQTTdelayQueue() {
     message += '`';
     message += element->_payload;
     message += '`';
-    floodingMesh->broadcast(message);
-    floodingMeshDelay(20);
+    sent = sendFloodingMeshBroadcast(message);
     sent = true;
 
     // FIXME TD-er: Must get some feedback on whether it was successful.
