@@ -170,6 +170,12 @@ void MQTTDisconnect()
 \*********************************************************************************************/
 bool MQTTConnect(int controller_idx)
 {
+  #ifdef USES_WIFI_MESH
+  if (Settings.ForceSendViaMesh() && MeshSettings.enabled) {
+    return false;
+  }
+  #endif
+
   ++mqtt_reconnect_count;
   MakeControllerSettings(ControllerSettings);
   LoadControllerSettings(controller_idx, ControllerSettings);
@@ -409,7 +415,7 @@ void processMQTTdelayQueue() {
 
   # ifdef USES_WIFI_MESH
 
-  if (!MQTTclient.connected() && meshActive()) {
+  if ((Settings.ForceSendViaMesh() || !MQTTclient.connected()) && meshActive()) {
     String message;
     message.reserve(element->_topic.length() + element->_payload.length() + 32);
     message += F("publish ");

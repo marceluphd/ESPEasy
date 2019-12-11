@@ -51,6 +51,9 @@ class SettingsStruct_tmpl
   bool SendToHttp_ack();
   void SendToHttp_ack(bool value);
 
+  bool ForceSendViaMesh();
+  void ForceSendViaMesh(bool value);
+
   void validate();
 
   bool networkSettingsEmpty() const;
