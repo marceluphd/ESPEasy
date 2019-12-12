@@ -154,6 +154,8 @@ void taskClear(taskIndex_t taskIndex, bool save);
 void SensorSendTask(taskIndex_t TaskIndex);
 bool remoteConfig(struct EventStruct *event, const String& string);
 
+bool validIntFromString(const String& tBuf, int& result);
+
 String parseString(const String& string, byte indexFind);
 String parseStringKeepCase(const String& string, byte indexFind);
 String parseStringToEnd(const String& string, byte indexFind);
@@ -167,6 +169,14 @@ void clearAccessBlock();
 String rulesProcessingFile(const String& fileName, String& event);
 int Calculate(const char *input, float* result);
 bool SourceNeedsStatusUpdate(byte eventSource);
+
+bool ExecuteCommand_all(byte source, const char *Line);
+bool ExecuteCommand_all_config(byte source, const char *Line);
+bool ExecuteCommand_plugin_config(byte source, const char *Line);
+bool ExecuteCommand_all_config_eventOnly(byte source, const char *Line);
+bool ExecuteCommand_internal(byte source, const char *Line);
+bool ExecuteCommand_plugin(byte source, const char *Line);
+bool ExecuteCommand_plugin(taskIndex_t taskIndex, byte source, const char *Line);
 
 void WifiScan(bool async, bool quick = false);
 void WifiScan();

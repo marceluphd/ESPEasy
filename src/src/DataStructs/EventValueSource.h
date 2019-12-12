@@ -8,5 +8,6 @@
 #define VALUE_SOURCE_UDP                    5
 #define VALUE_SOURCE_WEB_FRONTEND           6
 #define VALUE_SOURCE_RULES                  7
+#define VALUE_SOURCE_MESH                   8
 
 #endif // DATASTRUCTS_EVENT_VALUE_SOURCE_H

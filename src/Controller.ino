@@ -426,8 +426,7 @@ void processMQTTdelayQueue() {
     message += '`';
     message += element->_payload;
     message += '`';
-    sent = sendFloodingMeshBroadcast(message);
-    sent = true;
+    sent = sendFloodingMeshBroadcast(MESH_COMMAND, message);
 
     // FIXME TD-er: Must get some feedback on whether it was successful.
     MQTTDelayHandler.markProcessed(true);
