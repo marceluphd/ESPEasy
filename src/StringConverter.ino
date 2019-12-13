@@ -374,6 +374,18 @@ bool safe_strncpy(char *dest, const char *source, size_t max_size) {
   return result;
 }
 
+bool safe_strncpy(String& dest, const char *source, size_t max_size) {
+  if (max_size < 1) { return false; }
+  if (source == NULL) { return false; }
+  dest.reserve(max_size);
+  size_t i = 0;
+  while (i < max_size && source[i] != 0) {
+    dest += source[i];
+    ++i;
+  }
+  return true;
+}
+
 // Convert a string to lower case and replace spaces with underscores.
 String to_internal_string(const String& input, char replaceSpace) {
   String result = input;

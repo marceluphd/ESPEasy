@@ -171,7 +171,7 @@ void MQTTDisconnect()
 bool MQTTConnect(int controller_idx)
 {
   #ifdef USES_WIFI_MESH
-  if (Settings.ForceSendViaMesh() && MeshSettings.enabled) {
+  if (MeshSettings.forceSendViaMesh && MeshSettings.enabled) {
     return false;
   }
   #endif
@@ -415,7 +415,7 @@ void processMQTTdelayQueue() {
 
   # ifdef USES_WIFI_MESH
 
-  if ((Settings.ForceSendViaMesh() || !MQTTclient.connected()) && meshActive()) {
+  if ((MeshSettings.forceSendViaMesh || !MQTTclient.connected()) && meshActive()) {
     String message;
     message.reserve(element->_topic.length() + element->_payload.length() + 32);
     message += F("publish ");

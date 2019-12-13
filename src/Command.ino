@@ -108,7 +108,7 @@ bool executeInternalCommand(const char *cmd, struct EventStruct *event, const ch
                PSTR(S)) == 0)       \
     { if (!checkNrArguments(cmd, line, NARGS)) { \
       status = return_incorrect_nr_arguments(); return false;} \
-      else  status = C (event, line); return true;}
+      else  status = C (event, line); return status.equals(return_command_success());}
 
   // FIXME TD-er: Should we execute command when number of arguments is wrong?
 

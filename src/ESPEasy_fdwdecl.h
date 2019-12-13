@@ -103,7 +103,7 @@ bool safe_strncpy(char         *dest,
 bool safe_strncpy(char       *dest,
                   const char *source,
                   size_t      max_size);
-
+bool safe_strncpy(String& dest, const char *source, size_t max_size);
 
 void rulesProcessing(String& event);
 void setIntervalTimer(unsigned long id);

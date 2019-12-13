@@ -1,6 +1,8 @@
 #ifndef DATASTRUCTS_EVENT_VALUE_SOURCE_H
 #define DATASTRUCTS_EVENT_VALUE_SOURCE_H
 
+// Do not change the values of these defines, as they are also used for communication between nodes.
+
 #define VALUE_SOURCE_SYSTEM                 1
 #define VALUE_SOURCE_SERIAL                 2
 #define VALUE_SOURCE_HTTP                   3
