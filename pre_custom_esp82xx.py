@@ -20,27 +20,22 @@ if os.path.isfile('src/Custom.h'):
   env.Append(CPPDEFINES=["USE_CUSTOM_H"])
 else:
   env.Append(CPPDEFINES=[
-    "CONTROLLER_SET_ALL",
+    "CONTROLLER_SET_NONE",
+    "USES_C002",  # Domoticz MQTT
+    "USES_C005",  # Home Assistant (openHAB) MQTT
+
     "NOTIFIER_SET_NONE",
     "PLUGIN_SET_ONLY_SWITCH",
     "USES_P001",  # Switch
-    "USES_P002",  # ADC
     "USES_P004",  # Dallas DS18b20
+    "USES_P005",  # DHT11/22
+    "USES_P012",  # LCD 2004
+    "USES_P026",  # SysInfo
     "USES_P028",  # BME280
     "USES_P036",  # FrameOLED
-    "USES_P049",  # MHZ19
+    "USES_P037",  # MQTTImport
     "USES_P052",  # SenseAir
-    "USES_P056",  # SDS011-Dust
-    "USES_P059",  # Encoder
-    "USES_P082",  # GPS
-    "USES_P085",  # AcuDC24x
     "USES_P087",  # Serial Proxy
-
-    "USES_C016",  # Cache Controller
-    "USES_C018",  # TTN/RN2483
-
-    "FEATURE_MDNS",
-    "FEATURE_SD",
 
     "USE_SETTINGS_ARCHIVE"
   ])
